@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}AFE Inbox{% endblock %}
+{% block content %}
+
+<h1 class="page-title">Inbox AFE</h1>
+<p class="sub">
+  {% if user.is_supervisor %}AFE yang menunggu review Anda.
+  {% elif user.is_management %}AFE yang menunggu approval Anda.
+  {% elif user.is_engineer %}AFE Anda yang perlu direvisi.
+  {% endif %}
+</p>
+
+<table class="table" style="margin-top:16px;">
+  <thead>
+    <tr>
+      <th>Doc Number</th><th>Well</th><th>Versi</th>
+      <th class="num">Grand Total (USD)</th>
+      <th>Status</th><th>Created</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for afe in afes %}
+    <tr>
+      <td><a href="{% url 'afe:detail' afe.pk %}">{{ afe.doc_number }}</a></td>
+      <td>{{ afe.proposal.well.name }}</td>
+      <td>v{{ afe.version }}</td>
+      <td class="num">${{ afe.grand_total_usd|floatformat:2 }}</td>
+      <td><span class="status status-{{ afe.status|lower }}">{{ afe.get_status_display }}</span></td>
+      <td>{{ afe.created_at|date:"d M Y" }}</td>
+      <td><a class="btn btn-sm" href="{% url 'afe:detail' afe.pk %}">Buka</a></td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="7" class="sub" style="text-align:center; padding:16px;">Tidak ada AFE menunggu aksi Anda.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}

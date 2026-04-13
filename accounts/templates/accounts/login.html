@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Login — Drilling Proposal{% endblock %}
+{% block content %}
+<div class="card auth-card">
+  <h1 class="auth-title">Drilling Proposal</h1>
+  <p class="auth-sub">PT. PERTAMINA EP — Form DEP/Form/DE/01/DT</p>
+
+  <form method="post" class="form">
+    {% csrf_token %}
+    {% if form.errors %}
+      <div class="alert alert-error">Username atau password salah.</div>
+    {% endif %}
+    <label>Username
+      <input type="text" name="username" autofocus required>
+    </label>
+    <label>Password
+      <input type="password" name="password" required>
+    </label>
+    <button class="btn btn-primary" type="submit">Masuk</button>
+  </form>
+</div>
+{% endblock %}

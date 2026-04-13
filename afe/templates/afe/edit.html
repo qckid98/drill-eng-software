@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ afe.doc_number }}{% endblock %}
+{% block content %}
+
+<h1 class="page-title">Edit {{ afe.doc_number }}</h1>
+<p class="sub">
+  Proposal: <a href="{% url 'proposals:detail' afe.proposal.pk %}">{{ afe.proposal.doc_number }}</a>
+  · Well: {{ afe.proposal.well.name }}
+</p>
+
+<form method="post">
+  {% csrf_token %}
+
+  {% if header_form.errors or formset.non_form_errors %}
+    <div class="alert alert-error">
+      <strong>Form tidak valid — perbaiki kesalahan di bawah.</strong>
+      {{ header_form.non_field_errors }}
+      {{ formset.non_form_errors }}
+    </div>
+  {% endif %}
+
+  {# ------ header ------ #}
+  <div class="card">
+    <h2>Header</h2>
+    <div class="grid grid-3">
+      <label>
+        <span>Title</span>
+        {{ header_form.title }}
+        {{ header_form.title.errors }}
+      </label>
+      <label>
+        <span>Contingency (%)</span>
+        {{ header_form.contingency_percent }}
+        {{ header_form.contingency_percent.errors }}
+      </label>
+      <label>
+        <span>Exchange rate override (USD→IDR)</span>
+        {{ header_form.exchange_rate_override }}
+        {{ header_form.exchange_rate_override.errors }}
+      </label>
+    </div>
+  </div>
+
+  {# ------ 58 lines ------ #}
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h2>Cost Lines</h2>
+      <button type="submit"
+              formaction="{% url 'afe:regenerate' afe.pk %}"
+              class="btn btn-warn"
+              onclick="return confirm('Regenerate akan menghapus semua override. Lanjutkan?')">
+        ↻ Regenerate dari Rate Card
+      </button>
+    </div>
+
+    {{ formset.management_form }}
+
+    <table class="table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Description</th>
+          <th>Section</th>
+          <th>Method</th>
+          <th class="num">Qty</th>
+          <th class="num">Unit (USD)</th>
+          <th class="num">Calculated</th>
+          <th class="num">Override (USD)</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for form, line in rows %}
+          {% if line %}
+          <tr {% if line.template.is_subtotal_row %}class="afe-subtotal-row"{% endif %}>
+            <td>{{ line.template.line_code }}</td>
+            <td>
+              {% if line.template.is_subtotal_row %}<strong>{{ line.template.name }}</strong>
+              {% else %}{{ line.template.name }}{% endif %}
+            </td>
+            <td class="sub">{{ line.template.get_section_display }}</td>
+            <td class="sub">{{ line.template.get_calc_method_display }}</td>
+            <td class="num">{{ line.quantity|default_if_none:"—" }}</td>
+            <td class="num">{{ line.unit_price_usd|default_if_none:"—" }}</td>
+            <td class="num">${{ line.calculated_usd|floatformat:2 }}</td>
+            <td class="num">
+              {{ form.id }}
+              {% if not line.template.is_subtotal_row %}
+                {{ form.override_usd }}
+                {{ form.override_usd.errors }}
+              {% endif %}
+            </td>
+            <td>
+              {% if not line.template.is_subtotal_row %}
+                {{ form.notes }}
+                {{ form.notes.errors }}
+              {% endif %}
+            </td>
+          </tr>
+          {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div style="display:flex; gap:8px; margin-top:16px;">
+    <button type="submit" class="btn btn-primary">Simpan</button>
+    <button type="submit" name="save_and_continue" value="1" class="btn">Simpan & Lanjut Edit</button>
+    <a href="{% url 'afe:detail' afe.pk %}" class="btn">Batal</a>
+  </div>
+</form>
+
+{% endblock %}

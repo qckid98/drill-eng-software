@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}AFE Dashboard{% endblock %}
+{% block content %}
+
+<h1 class="page-title">Authorization For Expenditure (AFE)</h1>
+<p class="sub">Dokumen AFE dibuat dari Drilling Proposal yang sudah disetujui.</p>
+
+<form method="get" class="filter-bar" style="margin-top:16px;">
+  <input type="text" name="q" value="{{ q }}" placeholder="Cari doc number / well / title" class="input">
+  <select name="status" class="input">
+    <option value="">— Semua Status —</option>
+    {% for code, label in status_choices %}
+      <option value="{{ code }}" {% if code == current_status %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn">Filter</button>
+</form>
+
+<table class="table" style="margin-top:16px;">
+  <thead>
+    <tr>
+      <th>Doc Number</th>
+      <th>Well</th>
+      <th>Proposal</th>
+      <th>v</th>
+      <th class="num">Grand Total (USD)</th>
+      <th class="num">Grand Total (IDR)</th>
+      <th>Status</th>
+      <th>Created</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for afe in afes %}
+    <tr>
+      <td><a href="{% url 'afe:detail' afe.pk %}">{{ afe.doc_number }}</a></td>
+      <td>{{ afe.proposal.well.name }}</td>
+      <td>
+        <a href="{% url 'proposals:detail' afe.proposal.pk %}">{{ afe.proposal.doc_number }}</a>
+      </td>
+      <td>v{{ afe.version }}</td>
+      <td class="num">${{ afe.grand_total_usd|floatformat:2 }}</td>
+      <td class="num">Rp{{ afe.grand_total_idr|floatformat:0 }}</td>
+      <td><span class="status status-{{ afe.status|lower }}">{{ afe.get_status_display }}</span></td>
+      <td>{{ afe.created_at|date:"d M Y" }}</td>
+      <td><a class="btn btn-sm" href="{% url 'afe:detail' afe.pk %}">Lihat</a></td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="9" class="sub" style="text-align:center; padding:16px;">Belum ada AFE.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}

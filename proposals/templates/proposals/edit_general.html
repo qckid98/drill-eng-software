@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Edit Umum — {{ proposal.doc_number }}{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ proposal.doc_number }} — Edit Data Umum</h1>
+{% include "proposals/_wizard_nav.html" with step="general" %}
+
+<form method="post" class="form">
+  {% csrf_token %}
+  <div class="card">
+    <h2>Data Well</h2>
+    <div class="grid grid-3">
+      {% for field in well_form %}
+        <label><span>{{ field.label }}</span>{{ field }}</label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card">
+    <h2>Data Proposal</h2>
+    <div class="grid grid-3">
+      {% for field in prop_form %}
+        <label><span>{{ field.label }}</span>{{ field }}</label>
+      {% endfor %}
+    </div>
+  </div>
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'proposals:detail' proposal.pk %}" class="btn">Batal</a>
+    <button class="btn btn-primary">Simpan</button>
+  </div>
+</form>
+{% endblock %}

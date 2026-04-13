@@ -1,0 +1,4 @@
+<option value="">— pilih sub-kategori —</option>
+{% for item in items %}
+  <option value="{{ item.pk }}">{{ item.name }}</option>
+{% endfor %}

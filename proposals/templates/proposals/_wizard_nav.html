@@ -1,0 +1,11 @@
+{# Wizard sub-navigation reused across edit steps #}
+<nav class="wizard-nav">
+  <a href="{% url 'proposals:edit_general' proposal.pk %}" class="{% if step == 'general' %}active{% endif %}">1. Umum</a>
+  <a href="{% url 'proposals:edit_casing' proposal.pk %}" class="{% if step == 'casing' %}active{% endif %}">2. Casing Design</a>
+  {% for s in proposal.casing_sections.all %}
+    <a href="{% url 'proposals:casing_activities' proposal.pk s.pk %}" class="{% if step == 'activities' and section.pk == s.pk %}active{% endif %}">↳ {{ s.hole_section.label }}</a>
+  {% endfor %}
+  <a href="{% url 'proposals:edit_tubing' proposal.pk %}" class="{% if step == 'tubing' %}active{% endif %}">3. Tubing</a>
+  <a href="{% url 'proposals:edit_completion' proposal.pk %}" class="{% if step == 'completion' %}active{% endif %}">4. Completion</a>
+  <a href="{% url 'proposals:detail' proposal.pk %}" class="{% if step == 'review' %}active{% endif %}">5. Review & Submit</a>
+</nav>

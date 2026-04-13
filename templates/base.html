@@ -1,0 +1,56 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Drilling Proposal — PT. Pertamina EP{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+</head>
+<body>
+  {% if user.is_authenticated %}
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="{% url 'proposals:dashboard' %}">
+        <span class="brand-logo">⛽</span>
+        <span>Drilling Proposal</span>
+      </a>
+      <nav class="topnav">
+        <a href="{% url 'proposals:dashboard' %}">Proposal</a>
+        <a href="{% url 'proposals:inbox' %}">Inbox Proposal</a>
+        <a href="{% url 'afe:dashboard' %}">AFE</a>
+        <a href="{% url 'afe:inbox' %}">Inbox AFE</a>
+        {% if user.is_engineer or user.is_admin_role %}
+          <a href="{% url 'proposals:create' %}" class="btn btn-primary btn-sm">+ Proposal Baru</a>
+        {% endif %}
+      </nav>
+      <div class="topuser">
+        <span class="role-chip role-{{ user.role|lower }}">{{ user.get_role_display }}</span>
+        <span>{{ user.full_name|default:user.username }}</span>
+        <form method="post" action="{% url 'accounts:logout' %}" style="display:inline">
+          {% csrf_token %}
+          <button class="link">Logout</button>
+        </form>
+      </div>
+    </div>
+  </header>
+  {% endif %}
+
+  <main class="main">
+    {% if messages %}
+      <div class="messages">
+        {% for m in messages %}
+          <div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="foot">
+    <small>Form DEP/Form/DE/01/DT v2.4/2017 — PT. Pertamina EP</small>
+  </footer>
+</body>
+</html>

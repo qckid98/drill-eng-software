@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ section_title }} — {{ proposal.doc_number }}{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ proposal.doc_number }} — {{ section_title }}</h1>
+{% include "proposals/_wizard_nav.html" %}
+
+<form method="post" class="form">
+  {% csrf_token %}
+  <div class="card">
+    <div class="grid grid-3">
+      {% for field in form %}
+        <label><span>{{ field.label }}</span>{{ field }}</label>
+      {% endfor %}
+    </div>
+  </div>
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'proposals:detail' proposal.pk %}" class="btn">Batal</a>
+    <button class="btn btn-primary">Simpan</button>
+  </div>
+</form>
+{% endblock %}

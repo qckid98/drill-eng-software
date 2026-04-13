@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Drilling Proposal{% endblock %}
+{% block content %}
+<h1 class="page-title">Dashboard Proposal</h1>
+
+<form method="get" class="card" style="display:flex; gap:12px; align-items:end;">
+  <div style="flex:2;">
+    <label><span>Cari</span>
+      <input class="input" name="q" value="{{ q }}" placeholder="Nomor dokumen, nama well, lokasi…">
+    </label>
+  </div>
+  <div style="flex:1;">
+    <label><span>Status</span>
+      <select name="status" class="input">
+        <option value="">Semua</option>
+        {% for val, label in status_choices %}
+          <option value="{{ val }}" {% if current_status == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <button class="btn btn-primary">Filter</button>
+</form>
+
+<div class="card">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Doc No</th><th>Well</th><th>Lokasi</th><th>Status</th>
+        <th class="num">Dry Hole (d)</th>
+        <th class="num">Completion (d)</th>
+        <th class="num">Rig Days</th>
+        <th>Dibuat</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in proposals %}
+      <tr>
+        <td><a href="{% url 'proposals:detail' p.pk %}">{{ p.doc_number }}</a></td>
+        <td>{{ p.well.name }}</td>
+        <td>{{ p.well.location }}</td>
+        <td><span class="status status-{{ p.status|lower }}">{{ p.get_status_display }}</span></td>
+        <td class="num">{{ p.total_dryhole_days }}</td>
+        <td class="num">{{ p.total_completion_days }}</td>
+        <td class="num">{{ p.total_rig_days }}</td>
+        <td>{{ p.created_by }} — {{ p.created_at|date:"d M Y" }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="8" class="sub" style="text-align:center; padding:24px;">Belum ada proposal.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

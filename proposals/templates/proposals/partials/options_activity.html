@@ -1,0 +1,4 @@
+<option value="">— pilih aktivitas —</option>
+{% for item in items %}
+  <option value="{{ item.pk }}" data-hours="{{ item.default_hours }}">[{{ item.code|default:'-' }}] {{ item.description }} ({{ item.default_hours }} h)</option>
+{% endfor %}

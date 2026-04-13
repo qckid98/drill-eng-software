@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Inbox — Drilling Proposal{% endblock %}
+{% block content %}
+<h1 class="page-title">Inbox Approval</h1>
+<p class="sub">Proposal yang menunggu aksi Anda ({{ user.get_role_display }}).</p>
+
+<div class="card">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Doc No</th><th>Well</th><th>Status</th>
+        <th class="num">Rig Days</th>
+        <th>Disubmit oleh</th><th>Tanggal</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in proposals %}
+      <tr>
+        <td><a href="{% url 'proposals:detail' p.pk %}">{{ p.doc_number }}</a></td>
+        <td>{{ p.well }}</td>
+        <td><span class="status status-{{ p.status|lower }}">{{ p.get_status_display }}</span></td>
+        <td class="num">{{ p.total_rig_days }}</td>
+        <td>{{ p.created_by }}</td>
+        <td>{{ p.submitted_at|default:"—"|date:"d M Y H:i" }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" class="sub" style="text-align:center; padding:24px;">Inbox kosong.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

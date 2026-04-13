@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Proposal Baru{% endblock %}
+{% block content %}
+<h1 class="page-title">Buat Proposal Baru</h1>
+<p class="sub">Langkah 1 dari 4 — Data umum well & proposal.</p>
+
+<form method="post" class="form">
+  {% csrf_token %}
+
+  <div class="card">
+    <h2>Data Well</h2>
+    <div class="grid grid-3">
+      {% for field in well_form %}
+        <label><span>{{ field.label }}</span>{{ field }}{% if field.errors %}<small style="color:#b42318">{{ field.errors|join:", " }}</small>{% endif %}</label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Data Proposal</h2>
+    <div class="grid grid-3">
+      {% for field in prop_form %}
+        <label><span>{{ field.label }}</span>{{ field }}{% if field.errors %}<small style="color:#b42318">{{ field.errors|join:", " }}</small>{% endif %}</label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'proposals:dashboard' %}" class="btn">Batal</a>
+    <button class="btn btn-primary">Simpan & Lanjut ke Casing Design →</button>
+  </div>
+</form>
+{% endblock %}

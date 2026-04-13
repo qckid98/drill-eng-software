@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Casing Design — {{ proposal.doc_number }}{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ proposal.doc_number }} — Casing Design</h1>
+{% include "proposals/_wizard_nav.html" with step="casing" %}
+
+<form method="post" class="form">
+  {% csrf_token %}
+  {{ formset.management_form }}
+
+  <div class="card">
+    <h2>Casing Sections</h2>
+    <p class="sub">Urutkan dari section paling atas (permukaan) ke paling dalam. TOL hours opsional — jika diisi akan meng-override jumlah non-drilling activity.</p>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Order</th><th>Hole</th><th>OD csg</th><th>ID csg</th><th>Weight</th>
+          <th>Depth (m)</th><th>TOL (hr)</th><th>Mud</th><th>Completion?</th><th>Catatan</th><th>Hapus</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for f in formset %}
+        <tr>
+          {{ f.id }}
+          <td>{{ f.order }}</td>
+          <td>{{ f.hole_section }}</td>
+          <td>{{ f.od_csg }}</td>
+          <td>{{ f.id_csg }}</td>
+          <td>{{ f.weight_lbs_ft }}</td>
+          <td>{{ f.depth_m }}</td>
+          <td>{{ f.tol_hours }}</td>
+          <td>{{ f.mud_type }}</td>
+          <td>{{ f.is_completion }}</td>
+          <td>{{ f.notes }}</td>
+          <td>{% if f.instance.pk %}{{ f.DELETE }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'proposals:detail' proposal.pk %}" class="btn">Kembali</a>
+    <button class="btn" name="save_and_continue" value="1">Simpan & tambah row</button>
+    <button class="btn btn-primary">Simpan</button>
+  </div>
+  <p class="sub" style="margin-top:10px;">Setelah menyimpan, klik nama section di wizard nav untuk mengisi aktivitas drilling-nya.</p>
+</form>
+{% endblock %}

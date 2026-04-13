@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}{{ afe.doc_number }}{% endblock %}
+{% block content %}
+
+<div style="display:flex; justify-content:space-between; align-items:center; gap:16px;">
+  <div>
+    <h1 class="page-title" style="margin-bottom:4px;">{{ afe.doc_number }}</h1>
+    <p class="sub" style="margin:0;">
+      {{ afe.proposal.well.name }} · {{ afe.proposal.well.field }}
+      · Proposal <a href="{% url 'proposals:detail' afe.proposal.pk %}">{{ afe.proposal.doc_number }}</a>
+      · v{{ afe.version }}
+      · <span class="status status-{{ afe.status|lower }}">{{ afe.get_status_display }}</span>
+    </p>
+  </div>
+  <div style="display:flex; gap:8px;">
+    {% if can_edit %}
+      <a class="btn" href="{% url 'afe:edit' afe.pk %}">Edit</a>
+    {% endif %}
+  </div>
+</div>
+
+{# ============ Totals ============ #}
+<div class="totals" style="margin-top:20px;">
+  <div class="tile">
+    <div class="label">Total Tangible</div>
+    <div class="value">${{ afe.total_tangible_usd|floatformat:0 }}</div>
+    <div class="unit">USD</div>
+  </div>
+  <div class="tile">
+    <div class="label">Total Intangible</div>
+    <div class="value">${{ afe.total_intangible_usd|floatformat:0 }}</div>
+    <div class="unit">USD</div>
+  </div>
+  <div class="tile">
+    <div class="label">Contingency ({{ afe.contingency_percent }}%)</div>
+    <div class="value">${{ afe.contingency_amount_usd|floatformat:0 }}</div>
+    <div class="unit">USD</div>
+  </div>
+  <div class="tile">
+    <div class="label">GRAND TOTAL</div>
+    <div class="value">${{ afe.grand_total_usd|floatformat:0 }}</div>
+    <div class="unit">USD · Rp{{ afe.grand_total_idr|floatformat:0 }}</div>
+  </div>
+  <div class="tile">
+    <div class="label">Cost / meter</div>
+    <div class="value">${{ afe.cost_per_meter_usd|floatformat:2 }}</div>
+    <div class="unit">USD/m</div>
+  </div>
+  <div class="tile">
+    <div class="label">Cost / day</div>
+    <div class="value">${{ afe.cost_per_day_usd|floatformat:0 }}</div>
+    <div class="unit">USD/day</div>
+  </div>
+</div>
+
+{# ============ Chart ============ #}
+<div class="card">
+  <h2>Breakdown Cost per Section</h2>
+  <div class="chart-wrap">
+    <canvas id="afeChart"></canvas>
+  </div>
+</div>
+
+{# ============ 58-line F.CONT table ============ #}
+<div class="card">
+  <h2>AFE Cost Detail (58 lines F.CONT)</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Description</th>
+        <th>Section</th>
+        <th>Method</th>
+        <th class="num">Qty</th>
+        <th class="num">Unit Price (USD)</th>
+        <th class="num">Calculated</th>
+        <th class="num">Override</th>
+        <th class="num">Final (USD)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+      <tr {% if line.template.is_subtotal_row %}class="afe-subtotal-row"{% endif %}>
+        <td>{{ line.template.line_code }}</td>
+        <td>
+          {% if line.template.is_subtotal_row %}<strong>{{ line.template.name }}</strong>
+          {% else %}{{ line.template.name }}{% endif %}
+        </td>
+        <td class="sub">{{ line.template.get_section_display }}</td>
+        <td class="sub">{{ line.template.get_calc_method_display }}</td>
+        <td class="num">{{ line.quantity|default_if_none:"—" }}</td>
+        <td class="num">{{ line.unit_price_usd|default_if_none:"—" }}</td>
+        <td class="num">${{ line.calculated_usd|floatformat:2 }}</td>
+        <td class="num">{% if line.override_usd is not None %}${{ line.override_usd|floatformat:2 }}{% else %}—{% endif %}</td>
+        <td class="num"><strong>${{ line.final_usd|floatformat:2 }}</strong></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# ============ Approval workflow ============ #}
+<div class="card">
+  <h2>Approval Workflow</h2>
+  <table class="table table-compact">
+    <thead><tr><th>Waktu</th><th>Aktor</th><th>Aksi</th><th>Dari</th><th>Ke</th><th>Komentar</th></tr></thead>
+    <tbody>
+      {% for log in approval_logs %}
+      <tr>
+        <td>{{ log.timestamp|date:"d M Y H:i" }}</td>
+        <td>{{ log.actor }}</td>
+        <td>{{ log.get_action_display }}</td>
+        <td><span class="status status-{{ log.from_status|lower }}">{{ log.from_status }}</span></td>
+        <td><span class="status status-{{ log.to_status|lower }}">{{ log.to_status }}</span></td>
+        <td>{{ log.comment|default:"—" }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" class="sub" style="text-align:center;">Belum ada log approval.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <form method="post" action="{% url 'afe:action' afe.pk %}" style="margin-top:16px;">
+    {% csrf_token %}
+    <label><span>Komentar</span>
+      <textarea name="comment" rows="2" class="input" placeholder="(opsional)"></textarea>
+    </label>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      {% if can_submit %}
+        <button class="btn btn-primary" name="action" value="submit">Submit ke Supervisor</button>
+      {% endif %}
+      {% if can_review %}
+        <button class="btn btn-primary" name="action" value="forward">Forward ke Management</button>
+        <button class="btn btn-warn" name="action" value="request_revision">Minta Revisi</button>
+      {% endif %}
+      {% if can_approve %}
+        <button class="btn btn-ok" name="action" value="approve">Approve</button>
+        <button class="btn btn-danger" name="action" value="reject">Reject</button>
+        <button class="btn btn-warn" name="action" value="request_revision">Minta Revisi</button>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+{# ============ Chart.js init ============ #}
+{{ chart_labels|json_script:"afe-chart-labels" }}
+{{ chart_values|json_script:"afe-chart-values" }}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  if (typeof Chart === "undefined") return;
+  const labels = JSON.parse(document.getElementById("afe-chart-labels").textContent);
+  const values = JSON.parse(document.getElementById("afe-chart-values").textContent);
+  const ctx = document.getElementById("afeChart").getContext("2d");
+  new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: ["#c8102e", "#1d4ed8", "#16a34a", "#f59e0b", "#7c3aed", "#0ea5e9"],
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: "right" } },
+    },
+  });
+});
+</script>
+
+{% endblock %}

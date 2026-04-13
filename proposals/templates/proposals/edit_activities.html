@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Aktivitas {{ section.hole_section }} — {{ proposal.doc_number }}{% endblock %}
+{% block content %}
+<h1 class="page-title">
+  {{ proposal.doc_number }} — Aktivitas {{ section.hole_section.label }}
+  <span class="sub" style="font-size:13px;">(interval {{ section.previous_depth }}–{{ section.depth_m }} m)</span>
+</h1>
+{% include "proposals/_wizard_nav.html" with step="activities" section=section %}
+
+<form method="post" class="form">
+  {% csrf_token %}
+  {{ formset.management_form }}
+
+  <div class="card">
+    <h2>Drilling Activities</h2>
+    <p class="sub">Pilih aktivitas dari library master (bersumber dari Tab 1.0 workbook Excel). Kosongkan <em>Hours Override</em> untuk memakai default dari master data.</p>
+
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:60px;">Urut</th>
+          <th>Aktivitas</th>
+          <th style="width:120px;">Jam override</th>
+          <th>Catatan</th>
+          <th style="width:60px;">Hapus</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in formset %}
+          <tr>
+            {{ f.id }}
+            <td>{{ f.order }}</td>
+            <td>{{ f.activity }}</td>
+            <td>{{ f.hours_override }}</td>
+            <td>{{ f.notes }}</td>
+            <td>{% if f.instance.pk %}{{ f.DELETE }}{% endif %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Summary Section Ini</h2>
+    <div class="totals">
+      <div class="tile"><div class="label">Drilling days</div><div class="value">{{ section.drilling_days }}</div></div>
+      <div class="tile"><div class="label">Non-drilling days</div><div class="value">{{ section.non_drilling_days }}</div></div>
+      <div class="tile"><div class="label">Total days</div><div class="value">{{ section.total_days }}</div></div>
+    </div>
+    <p class="sub">Nilai di atas akan ter-refresh setelah Anda menyimpan formset di bawah.</p>
+  </div>
+
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'proposals:edit_casing' proposal.pk %}" class="btn">← Casing</a>
+    <button class="btn btn-primary">Simpan</button>
+  </div>
+</form>
+{% endblock %}
