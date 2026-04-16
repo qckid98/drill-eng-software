@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ phase_label }} — {{ proposal.doc_number }}{% endblock %}
+{% block content %}
+<h1 class="page-title">
+  {{ proposal.doc_number }} — {{ phase_label }}
+  <span class="sub" style="font-size:13px;">(aktivitas proposal-level, di luar casing section)</span>
+</h1>
+
+<form method="post" class="form">
+  {% csrf_token %}
+  {{ formset.management_form }}
+
+  <div class="card">
+    <h2>Aktivitas {{ phase_label }}</h2>
+    <p class="sub">
+      Pilih aktivitas dari library master (Tab 1.0). Untuk fase
+      <strong>Pre Spud</strong> ini juga termasuk Rig Move / Mob, sedangkan
+      <strong>Rig Release</strong> termasuk demob &amp; finalisasi.
+      Kosongkan <em>Jam override</em> untuk memakai default master.
+    </p>
+
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:60px;">Urut</th>
+          <th>Aktivitas</th>
+          <th style="width:120px;">Jam override</th>
+          <th>Catatan</th>
+          <th style="width:60px;">Hapus</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in formset %}
+          <tr>
+            {{ f.id }}
+            <td>{{ f.order }}</td>
+            <td>{{ f.activity }}</td>
+            <td>{{ f.hours_override }}</td>
+            <td>{{ f.notes }}</td>
+            <td>{% if f.instance.pk %}{{ f.DELETE }}{% endif %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Summary Fase Ini</h2>
+    <div class="totals">
+      {% if phase == "PRE_SPUD" %}
+        <div class="tile">
+          <div class="label">Pre Spud days</div>
+          <div class="value">{{ proposal.total_pre_spud_days }}</div>
+          <div class="unit">days</div>
+        </div>
+      {% else %}
+        <div class="tile">
+          <div class="label">Rig Release days</div>
+          <div class="value">{{ proposal.total_rig_release_days }}</div>
+          <div class="unit">days</div>
+        </div>
+      {% endif %}
+      <div class="tile">
+        <div class="label">Total Rig Days</div>
+        <div class="value">{{ proposal.total_rig_days }}</div>
+        <div class="unit">days</div>
+      </div>
+    </div>
+    <p class="sub">Nilai di atas akan ter-refresh setelah Anda menyimpan formset.</p>
+  </div>
+
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'proposals:detail' proposal.pk %}" class="btn">← Kembali ke Detail</a>
+    <button class="btn btn-primary">Simpan</button>
+  </div>
+</form>
+{% endblock %}

@@ -20,6 +20,11 @@
 {# ============ Totals ============ #}
 <div class="totals" style="margin-top:20px;">
   <div class="tile">
+    <div class="label">Pre Spud Days</div>
+    <div class="value">{{ proposal.total_pre_spud_days }}</div>
+    <div class="unit">days</div>
+  </div>
+  <div class="tile">
     <div class="label">Dry Hole Days</div>
     <div class="value">{{ proposal.total_dryhole_days }}</div>
     <div class="unit">days</div>
@@ -30,10 +35,65 @@
     <div class="unit">days</div>
   </div>
   <div class="tile">
-    <div class="label">Rig Days (max + mob/demob)</div>
+    <div class="label">Rig Release Days</div>
+    <div class="value">{{ proposal.total_rig_release_days }}</div>
+    <div class="unit">days</div>
+  </div>
+  <div class="tile">
+    <div class="label">Total Rig Days</div>
     <div class="value">{{ proposal.total_rig_days }}</div>
     <div class="unit">days</div>
   </div>
+</div>
+
+{# ============ Phase activities (Pre Spud / Rig Release) ============ #}
+<div class="card">
+  <h2>Pre Spud &amp; Rig Release</h2>
+  <p class="sub">
+    Aktivitas fase yang tidak terikat casing section. Pre Spud sudah termasuk
+    rig move/mob; Rig Release termasuk demob &amp; finalisasi.
+  </p>
+  <table class="table table-compact">
+    <thead>
+      <tr>
+        <th>Fase</th>
+        <th class="num">Aktivitas</th>
+        <th class="num">Total jam</th>
+        <th class="num">Total hari</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% with pre_spud_acts=proposal.phase_activities.all %}
+      <tr>
+        <td><strong>Pre Spud</strong></td>
+        <td class="num">
+          {% with c=0 %}{% for a in pre_spud_acts %}{% if a.phase == "PRE_SPUD" %}{{ forloop.counter0|add:1 }}{% endif %}{% endfor %}{% endwith %}
+        </td>
+        <td class="num">—</td>
+        <td class="num"><strong>{{ proposal.total_pre_spud_days }}</strong></td>
+        <td>
+          {% if can_edit %}
+            <a class="btn btn-sm" href="{% url 'proposals:phase_activities' proposal.pk 'PRE_SPUD' %}">Edit Pre Spud</a>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Rig Release</strong></td>
+        <td class="num">
+          {% for a in pre_spud_acts %}{% if a.phase == "RIG_RELEASE" %}{{ forloop.counter0|add:1 }}{% endif %}{% endfor %}
+        </td>
+        <td class="num">—</td>
+        <td class="num"><strong>{{ proposal.total_rig_release_days }}</strong></td>
+        <td>
+          {% if can_edit %}
+            <a class="btn btn-sm" href="{% url 'proposals:phase_activities' proposal.pk 'RIG_RELEASE' %}">Edit Rig Release</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endwith %}
+    </tbody>
+  </table>
 </div>
 
 {# ============ Chart ============ #}

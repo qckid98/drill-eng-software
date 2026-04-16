@@ -217,7 +217,7 @@ class Command(BaseCommand):
         COL_ACT_DESC = 6
         COL_CODE = 13
         COL_HOLE = 15
-        COL_HOURS = 23
+        COL_HOURS = 25
 
         l1_cache = {}      # name -> ActivityCategoryL1
         l2_cache = {}      # (l1_name, l2_name) -> ActivityCategoryL2

@@ -51,6 +51,14 @@ class Well(models.Model):
     azimuth_deg = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     kop_m = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
 
+    # Liner overlap (Excel A.Proposal R20-R21) — used when there are 7" / 4-1/2" liners.
+    overlap_liner_7_m = models.DecimalField(
+        "Overlap 7\" liner (m)", max_digits=8, decimal_places=2, null=True, blank=True,
+    )
+    overlap_liner_4_5_m = models.DecimalField(
+        "Overlap 4-1/2\" liner (m)", max_digits=8, decimal_places=2, null=True, blank=True,
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

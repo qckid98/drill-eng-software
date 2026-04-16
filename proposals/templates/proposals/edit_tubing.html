@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Tubing Specification — {{ proposal.doc_number }}{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ proposal.doc_number }} — Tubing Specification</h1>
+{% include "proposals/_wizard_nav.html" %}
+
+<form method="post" class="form">
+  {% csrf_token %}
+
+  {# ---- Tubing Items ---- #}
+  <div class="card">
+    <h2>Tubing Strings</h2>
+    <p class="sub">Bisa lebih dari satu ukuran tubing per proposal (mis. 3-1/2", 2-7/8", 2-3/8").</p>
+    {{ tubing_formset.management_form }}
+    <table class="table">
+      <thead>
+        <tr><th>Urut</th><th>OD (inch)</th><th>ID (inch)</th><th>Weight (lbs/ft)</th><th>Avg length (m)</th><th>Depth MD (m)</th><th>Hapus</th></tr>
+      </thead>
+      <tbody>
+        {% for f in tubing_formset %}
+        <tr>
+          {{ f.id }}
+          <td>{{ f.order }}</td>
+          <td>{{ f.od_inch }}</td>
+          <td>{{ f.id_inch }}</td>
+          <td>{{ f.weight_lbs_ft }}</td>
+          <td>{{ f.avg_length_m }}</td>
+          <td>{{ f.depth_md }}</td>
+          <td>{% if f.instance.pk %}{{ f.DELETE }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# ---- Formation Markers ---- #}
+  <div class="card">
+    <h2>Formation Markers</h2>
+    <p class="sub">Formasi referensi yang ditembus (mis. Cisubuh @80m, Parigi @758m).</p>
+    {{ marker_formset.management_form }}
+    <table class="table">
+      <thead>
+        <tr><th>Urut</th><th>Nama formasi</th><th>Depth MD (m)</th><th>Hapus</th></tr>
+      </thead>
+      <tbody>
+        {% for f in marker_formset %}
+        <tr>
+          {{ f.id }}
+          <td>{{ f.order }}</td>
+          <td>{{ f.name }}</td>
+          <td>{{ f.depth_md }}</td>
+          <td>{% if f.instance.pk %}{{ f.DELETE }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# ---- Tube Length Ranges ---- #}
+  <div class="card">
+    <h2>Average Tube Length per Range</h2>
+    <p class="sub">Rata-rata panjang tabung per rentang (R-1, R-2, R-3, SP).</p>
+    {{ range_formset.management_form }}
+    <table class="table">
+      <thead>
+        <tr><th>Label</th><th>Avg length (m)</th><th>Hapus</th></tr>
+      </thead>
+      <tbody>
+        {% for f in range_formset %}
+        <tr>
+          {{ f.id }}
+          <td>{{ f.label }}</td>
+          <td>{{ f.avg_length_m }}</td>
+          <td>{% if f.instance.pk %}{{ f.DELETE }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'proposals:detail' proposal.pk %}" class="btn">Batal</a>
+    <button class="btn btn-primary">Simpan</button>
+  </div>
+</form>
+{% endblock %}

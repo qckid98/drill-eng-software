@@ -10,12 +10,12 @@
 
   <div class="card">
     <h2>Casing Sections</h2>
-    <p class="sub">Urutkan dari section paling atas (permukaan) ke paling dalam. TOL hours opsional — jika diisi akan meng-override jumlah non-drilling activity.</p>
+    <p class="sub">Urutkan dari section paling atas (permukaan) ke paling dalam. Top of Liner (mMD) hanya diisi untuk casing liner — kosongkan untuk casing penuh.</p>
     <table class="table">
       <thead>
         <tr>
           <th>Order</th><th>Hole</th><th>OD csg</th><th>ID csg</th><th>Weight</th>
-          <th>Depth (m)</th><th>TOL (hr)</th><th>Mud</th><th>Completion?</th><th>Catatan</th><th>Hapus</th>
+          <th>Depth (m)</th><th>Top of Liner (mMD)</th><th>Mud</th><th>SG from</th><th>SG to</th><th>Completion?</th><th>Catatan</th><th>Hapus</th>
         </tr>
       </thead>
       <tbody>
@@ -28,8 +28,10 @@
           <td>{{ f.id_csg }}</td>
           <td>{{ f.weight_lbs_ft }}</td>
           <td>{{ f.depth_m }}</td>
-          <td>{{ f.tol_hours }}</td>
+          <td>{{ f.top_of_liner_m }}</td>
           <td>{{ f.mud_type }}</td>
+          <td>{{ f.sg_from }}</td>
+          <td>{{ f.sg_to }}</td>
           <td>{{ f.is_completion }}</td>
           <td>{{ f.notes }}</td>
           <td>{% if f.instance.pk %}{{ f.DELETE }}{% endif %}</td>

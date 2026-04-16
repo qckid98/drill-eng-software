@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp \"C:/Users/ifebr/Documents/PEP Z7/drill-eng-software/db.sqlite3\" \"C:/Users/ifebr/Documents/PEP Z7/drill-eng-software/db.sqlite3.bak\")",
+      "Bash(ls -la \"C:/Users/ifebr/Documents/PEP Z7/drill-eng-software/db.sqlite3\"*)",
+      "Bash(python manage.py makemigrations proposals --name rename_tol_hours_to_top_of_liner_m)",
+      "Bash(ls .venv/Scripts/python.exe)",
+      "Bash(.venv/Scripts/python.exe manage.py makemigrations proposals --name rename_tol_hours_to_top_of_liner_m)",
+      "Bash(.venv/Scripts/python.exe manage.py migrate proposals)",
+      "Bash(.venv/Scripts/python.exe manage.py check)",
+      "Bash(.venv/Scripts/python.exe -c ':*)",
+      "Bash(.venv/Scripts/python.exe manage.py makemigrations proposals --name proposal_phase_activity)",
+      "Bash(.venv/Scripts/python.exe manage.py makemigrations --name add_excel_fields)",
+      "Bash(.venv/Scripts/python.exe manage.py migrate)",
+      "Bash(.venv/Scripts/python.exe manage.py makemigrations proposals --name casing_sg_range)",
+      "Bash(.venv/Scripts/python.exe manage.py makemigrations proposals --name tubing_completion_refactor)"
+    ]
+  }
+}

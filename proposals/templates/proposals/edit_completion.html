@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Completion Specification — {{ proposal.doc_number }}{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ proposal.doc_number }} — Completion Specification</h1>
+{% include "proposals/_wizard_nav.html" %}
+
+<form method="post" class="form">
+  {% csrf_token %}
+
+  {# ---- Completion Spec fields ---- #}
+  <div class="card">
+    <h2>Completion Fluid &amp; Perforation</h2>
+    <div class="grid grid-3">
+      {% for field in form %}
+        <label><span>{{ field.label }}</span>{{ field }}</label>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# ---- Coring Intervals ---- #}
+  <div class="card">
+    <h2>Coring Intervals</h2>
+    <p class="sub">Sampai 12 interval coring sesuai Excel A.Proposal R63-R75.</p>
+    {{ coring_formset.management_form }}
+    <table class="table">
+      <thead>
+        <tr><th>Urut</th><th>Depth from (m)</th><th>Depth to (m)</th><th>Coring meterage (m)</th><th>OH section (inch)</th><th>Hapus</th></tr>
+      </thead>
+      <tbody>
+        {% for f in coring_formset %}
+        <tr>
+          {{ f.id }}
+          <td>{{ f.order }}</td>
+          <td>{{ f.depth_from_m }}</td>
+          <td>{{ f.depth_to_m }}</td>
+          <td>{{ f.coring_mtrg_m }}</td>
+          <td>{{ f.oh_section_inch }}</td>
+          <td>{% if f.instance.pk %}{{ f.DELETE }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'proposals:detail' proposal.pk %}" class="btn">Batal</a>
+    <button class="btn btn-primary">Simpan</button>
+  </div>
+</form>
+{% endblock %}

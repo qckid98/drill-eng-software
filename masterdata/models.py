@@ -132,6 +132,64 @@ class DrillingActivity(models.Model):
         return f"[{self.code or '-'}] {self.description[:60]}"
 
 
+class SectionTemplateKind(models.TextChoices):
+    PRE_SPUD = "PRE_SPUD", "Pre Spud"
+    DRILLING = "DRILLING", "Drilling"
+    COMPLETION = "COMPLETION", "Completion"
+    RIG_RELEASE = "RIG_RELEASE", "Rig Release"
+
+
+class SectionTemplate(models.Model):
+    """
+    Preset 'TYPE OF DRILLING SECTION' from Tab 2.0/3.0 Excel.
+    Engineer picks one per casing section (or per phase) and it auto-fills
+    the ~20 standard activities for that variant.
+    """
+
+    name = models.CharField(
+        max_length=150, unique=True,
+        help_text='e.g. \'DRILLING 17-1/2"_Vers.A2/AFTER ENDU TEST\'',
+    )
+    hole_section = models.ForeignKey(
+        HoleSection, on_delete=models.PROTECT,
+        related_name="templates", null=True, blank=True,
+        help_text="Null for Pre Spud / Rig Release templates.",
+    )
+    phase_kind = models.CharField(
+        max_length=20, choices=SectionTemplateKind.choices,
+    )
+    order = models.PositiveIntegerField(default=0)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["order", "name"]
+
+    def __str__(self):
+        return self.name
+
+
+class SectionTemplateItem(models.Model):
+    """One activity row inside a preset variant."""
+
+    template = models.ForeignKey(
+        SectionTemplate, on_delete=models.CASCADE, related_name="items"
+    )
+    order = models.PositiveIntegerField(default=0)
+    activity = models.ForeignKey(
+        DrillingActivity, on_delete=models.PROTECT, related_name="+"
+    )
+    default_hours = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        help_text="Override default_hours from activity master if needed.",
+    )
+
+    class Meta:
+        ordering = ["template_id", "order"]
+
+    def __str__(self):
+        return f"{self.template.name} — {self.activity}"
+
+
 class RigSpec(models.Model):
     """Physical rig that performs the work."""
 

@@ -6,23 +6,33 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
-from masterdata.models import ActivityCategoryL1, ActivityCategoryL2, DrillingActivity
+from masterdata.models import (
+    ActivityCategoryL1,
+    ActivityCategoryL2,
+    DrillingActivity,
+    SectionTemplate,
+)
+from .services.templates import apply_template_to_section, apply_template_to_phase
 
 from .forms import (
     ApprovalActionForm,
     CasingSectionFormSet,
     CompletionSpecForm,
+    CoringIntervalFormSet,
+    FormationMarkerFormSet,
     ProposalActivityFormSet,
     ProposalGeneralForm,
-    TubingSpecForm,
+    ProposalPhaseActivityFormSet,
+    TubeLengthRangeFormSet,
+    TubingItemFormSet,
     WellForm,
 )
 from .models import (
     CasingSection,
     CompletionSpec,
     Proposal,
+    ProposalPhase,
     ProposalStatus,
-    TubingSpec,
 )
 from .services import approval
 from .services.calc import recalculate_proposal
@@ -197,17 +207,26 @@ def proposal_edit_tubing(request, pk):
     except PermissionError as exc:
         return HttpResponseForbidden(str(exc))
 
-    instance, _ = TubingSpec.objects.get_or_create(proposal=proposal)
     if request.method == "POST":
-        form = TubingSpecForm(request.POST, instance=instance)
-        if form.is_valid():
-            form.save()
+        tubing_fs = TubingItemFormSet(request.POST, instance=proposal, prefix="tubing")
+        marker_fs = FormationMarkerFormSet(request.POST, instance=proposal, prefix="marker")
+        range_fs = TubeLengthRangeFormSet(request.POST, instance=proposal, prefix="range")
+        if tubing_fs.is_valid() and marker_fs.is_valid() and range_fs.is_valid():
+            tubing_fs.save()
+            marker_fs.save()
+            range_fs.save()
             messages.success(request, "Tubing spec disimpan.")
             return redirect("proposals:detail", pk=pk)
     else:
-        form = TubingSpecForm(instance=instance)
-    return render(request, "proposals/edit_simple.html", {
-        "proposal": proposal, "form": form, "section_title": "Tubing Specification",
+        tubing_fs = TubingItemFormSet(instance=proposal, prefix="tubing")
+        marker_fs = FormationMarkerFormSet(instance=proposal, prefix="marker")
+        range_fs = TubeLengthRangeFormSet(instance=proposal, prefix="range")
+
+    return render(request, "proposals/edit_tubing.html", {
+        "proposal": proposal,
+        "tubing_formset": tubing_fs,
+        "marker_formset": marker_fs,
+        "range_formset": range_fs,
     })
 
 
@@ -222,14 +241,20 @@ def proposal_edit_completion(request, pk):
     instance, _ = CompletionSpec.objects.get_or_create(proposal=proposal)
     if request.method == "POST":
         form = CompletionSpecForm(request.POST, instance=instance)
-        if form.is_valid():
+        coring_fs = CoringIntervalFormSet(request.POST, instance=instance, prefix="coring")
+        if form.is_valid() and coring_fs.is_valid():
             form.save()
+            coring_fs.save()
             messages.success(request, "Completion spec disimpan.")
             return redirect("proposals:detail", pk=pk)
     else:
         form = CompletionSpecForm(instance=instance)
-    return render(request, "proposals/edit_simple.html", {
-        "proposal": proposal, "form": form, "section_title": "Completion Specification",
+        coring_fs = CoringIntervalFormSet(instance=instance, prefix="coring")
+
+    return render(request, "proposals/edit_completion.html", {
+        "proposal": proposal,
+        "form": form,
+        "coring_formset": coring_fs,
     })
 
 
@@ -255,9 +280,96 @@ def casing_activities(request, pk, section_id):
     else:
         formset = ProposalActivityFormSet(instance=section)
 
+    templates = SectionTemplate.objects.filter(
+        hole_section=section.hole_section
+    ).order_by("order")
+
     return render(request, "proposals/edit_activities.html", {
         "proposal": proposal,
         "section": section,
+        "formset": formset,
+        "category_l1": ActivityCategoryL1.objects.all(),
+        "templates": templates,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def apply_section_template(request, pk, section_id):
+    proposal = get_object_or_404(Proposal, pk=pk)
+    section = get_object_or_404(CasingSection, pk=section_id, proposal=proposal)
+    try:
+        _require_edit(request.user, proposal)
+    except PermissionError as exc:
+        return HttpResponseForbidden(str(exc))
+
+    template = get_object_or_404(SectionTemplate, pk=request.POST.get("template_id"))
+    replace = "replace" in request.POST
+    apply_template_to_section(section, template, replace=replace)
+    messages.success(request, f"Template '{template.name}' diterapkan ke section {section.hole_section}.")
+    return redirect("proposals:casing_activities", pk=pk, section_id=section_id)
+
+
+@login_required
+@require_http_methods(["POST"])
+def apply_phase_template(request, pk, phase):
+    proposal = get_object_or_404(Proposal, pk=pk)
+    try:
+        _require_edit(request.user, proposal)
+    except PermissionError as exc:
+        return HttpResponseForbidden(str(exc))
+
+    from .models import ProposalPhase
+    if phase not in ProposalPhase.values:
+        return HttpResponseForbidden(f"Phase tidak dikenal: {phase}")
+
+    template = get_object_or_404(SectionTemplate, pk=request.POST.get("template_id"))
+    replace = "replace" in request.POST
+    apply_template_to_phase(proposal, phase, template, replace=replace)
+    messages.success(request, f"Template '{template.name}' diterapkan ke fase {phase}.")
+    return redirect("proposals:phase_activities", pk=pk, phase=phase)
+
+
+# ---------------------------------------------------------------------------
+# Pre Spud / Rig Release phase activities (proposal-level, not section-level)
+# ---------------------------------------------------------------------------
+@login_required
+def phase_activities(request, pk, phase):
+    proposal = get_object_or_404(Proposal, pk=pk)
+    try:
+        _require_edit(request.user, proposal)
+    except PermissionError as exc:
+        return HttpResponseForbidden(str(exc))
+
+    if phase not in ProposalPhase.values:
+        return HttpResponseForbidden(f"Phase tidak dikenal: {phase}")
+
+    # Filter formset queryset by phase so we only show activities for this phase.
+    queryset = proposal.phase_activities.filter(phase=phase)
+
+    if request.method == "POST":
+        formset = ProposalPhaseActivityFormSet(
+            request.POST, instance=proposal, queryset=queryset
+        )
+        if formset.is_valid():
+            instances = formset.save(commit=False)
+            for obj in instances:
+                obj.phase = phase
+                obj.save()
+            for obj in formset.deleted_objects:
+                obj.delete()
+            recalculate_proposal(proposal)
+            messages.success(
+                request, f"Aktivitas {dict(ProposalPhase.choices)[phase]} disimpan."
+            )
+            return redirect("proposals:phase_activities", pk=pk, phase=phase)
+    else:
+        formset = ProposalPhaseActivityFormSet(instance=proposal, queryset=queryset)
+
+    return render(request, "proposals/edit_phase_activities.html", {
+        "proposal": proposal,
+        "phase": phase,
+        "phase_label": dict(ProposalPhase.choices)[phase],
         "formset": formset,
         "category_l1": ActivityCategoryL1.objects.all(),
     })

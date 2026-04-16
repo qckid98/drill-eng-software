@@ -4,9 +4,12 @@ from .models import (
     ApprovalLog,
     CasingSection,
     CompletionSpec,
+    CoringInterval,
+    FormationMarker,
     Proposal,
     ProposalActivity,
-    TubingSpec,
+    TubeLengthRange,
+    TubingItem,
 )
 
 
@@ -51,6 +54,9 @@ class CasingSectionAdmin(admin.ModelAdmin):
     inlines = [ProposalActivityInline]
 
 
-admin.site.register(TubingSpec)
+admin.site.register(TubingItem)
+admin.site.register(FormationMarker)
+admin.site.register(TubeLengthRange)
 admin.site.register(CompletionSpec)
+admin.site.register(CoringInterval)
 admin.site.register(ApprovalLog)
