@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Upload Rate Card dari Excel{% endblock %}
+{% block content %}
+
+<h1 class="page-title">Upload Rate Card dari Excel</h1>
+<p class="sub">
+  Upload file AFE Excel (.xlsx) untuk mengimport atau memperbarui daftar harga dari sheet E.COMP atau D.MATE.
+  Item yang sudah ada akan diperbarui, item baru akan ditambahkan.
+</p>
+
+<form method="post" enctype="multipart/form-data" class="form">
+  {% csrf_token %}
+  <div class="card">
+    <label>
+      <span>File Excel (.xlsx)</span>
+      {{ form.excel_file }}
+      {% if form.excel_file.errors %}<span class="error">{{ form.excel_file.errors.0 }}</span>{% endif %}
+      <small class="sub">{{ form.excel_file.help_text }}</small>
+    </label>
+  </div>
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'afe:rate_card_list' %}" class="btn">Batal</a>
+    <button class="btn btn-primary">Upload & Import</button>
+  </div>
+</form>
+
+{% if recent_logs %}
+<div class="card" style="margin-top:24px;">
+  <h2>Riwayat Import</h2>
+  <table class="table table-compact">
+    <thead>
+      <tr><th>Tanggal</th><th>File</th><th>User</th><th class="num">Baru</th><th class="num">Update</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      {% for log in recent_logs %}
+      <tr>
+        <td>{{ log.uploaded_at|date:"d M Y H:i" }}</td>
+        <td>{{ log.file_name }}</td>
+        <td>{{ log.uploaded_by|default:"-" }}</td>
+        <td class="num">{{ log.items_created }}</td>
+        <td class="num">{{ log.items_updated }}</td>
+        <td class="sub">{{ log.notes|default:"-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% endblock %}

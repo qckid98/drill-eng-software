@@ -11,19 +11,18 @@
     </p>
   </div>
   {% if can_edit %}
-  <div>
-    <a href="{% url 'proposals:edit_general' proposal.pk %}" class="btn">Edit</a>
+  <div style="display:flex; gap:8px;">
+    <a href="{% url 'proposals:edit_general' proposal.pk %}" class="btn">Edit Umum</a>
+    <a href="{% url 'proposals:edit_casing' proposal.pk %}" class="btn">Edit Casing</a>
+    <a href="{% url 'proposals:edit_tubing' proposal.pk %}" class="btn">Edit Tubing</a>
+    <a href="{% url 'proposals:edit_rates' proposal.pk %}" class="btn">Edit Rates</a>
+    <a href="{% url 'proposals:edit_markers' proposal.pk %}" class="btn">Edit Markers</a>
   </div>
   {% endif %}
 </div>
 
 {# ============ Totals ============ #}
 <div class="totals" style="margin-top:20px;">
-  <div class="tile">
-    <div class="label">Pre Spud Days</div>
-    <div class="value">{{ proposal.total_pre_spud_days }}</div>
-    <div class="unit">days</div>
-  </div>
   <div class="tile">
     <div class="label">Dry Hole Days</div>
     <div class="value">{{ proposal.total_dryhole_days }}</div>
@@ -35,72 +34,24 @@
     <div class="unit">days</div>
   </div>
   <div class="tile">
-    <div class="label">Rig Release Days</div>
-    <div class="value">{{ proposal.total_rig_release_days }}</div>
-    <div class="unit">days</div>
-  </div>
-  <div class="tile">
-    <div class="label">Total Rig Days</div>
+    <div class="label">Rig Days (total + mob/demob)</div>
     <div class="value">{{ proposal.total_rig_days }}</div>
     <div class="unit">days</div>
   </div>
 </div>
 
-{# ============ Phase activities (Pre Spud / Rig Release) ============ #}
-<div class="card">
-  <h2>Pre Spud &amp; Rig Release</h2>
-  <p class="sub">
-    Aktivitas fase yang tidak terikat casing section. Pre Spud sudah termasuk
-    rig move/mob; Rig Release termasuk demob &amp; finalisasi.
-  </p>
-  <table class="table table-compact">
-    <thead>
-      <tr>
-        <th>Fase</th>
-        <th class="num">Aktivitas</th>
-        <th class="num">Total jam</th>
-        <th class="num">Total hari</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% with pre_spud_acts=proposal.phase_activities.all %}
-      <tr>
-        <td><strong>Pre Spud</strong></td>
-        <td class="num">
-          {% with c=0 %}{% for a in pre_spud_acts %}{% if a.phase == "PRE_SPUD" %}{{ forloop.counter0|add:1 }}{% endif %}{% endfor %}{% endwith %}
-        </td>
-        <td class="num">—</td>
-        <td class="num"><strong>{{ proposal.total_pre_spud_days }}</strong></td>
-        <td>
-          {% if can_edit %}
-            <a class="btn btn-sm" href="{% url 'proposals:phase_activities' proposal.pk 'PRE_SPUD' %}">Edit Pre Spud</a>
-          {% endif %}
-        </td>
-      </tr>
-      <tr>
-        <td><strong>Rig Release</strong></td>
-        <td class="num">
-          {% for a in pre_spud_acts %}{% if a.phase == "RIG_RELEASE" %}{{ forloop.counter0|add:1 }}{% endif %}{% endfor %}
-        </td>
-        <td class="num">—</td>
-        <td class="num"><strong>{{ proposal.total_rig_release_days }}</strong></td>
-        <td>
-          {% if can_edit %}
-            <a class="btn btn-sm" href="{% url 'proposals:phase_activities' proposal.pk 'RIG_RELEASE' %}">Edit Rig Release</a>
-          {% endif %}
-        </td>
-      </tr>
-      {% endwith %}
-    </tbody>
-  </table>
-</div>
-
-{# ============ Chart ============ #}
+{# ============ Charts ============ #}
 <div class="card">
   <h2>Breakdown Drilling Time per Section</h2>
   <div class="chart-wrap">
     <canvas id="drillChart"></canvas>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Drilling Curve (Depth vs Days)</h2>
+  <div class="chart-wrap">
+    <canvas id="curveChart"></canvas>
   </div>
 </div>
 
@@ -111,11 +62,29 @@
     <div><strong>Operator:</strong><br>{{ proposal.well.operator }}</div>
     <div><strong>Contract area:</strong><br>{{ proposal.well.contract_area }}</div>
     <div><strong>Field / Basin:</strong><br>{{ proposal.well.field }} / {{ proposal.well.basin }}</div>
-    <div><strong>Target formation:</strong><br>{{ proposal.well.target_formation|default:"—" }}</div>
+    <div><strong>Target formation:</strong><br>{{ proposal.well.target_formation|default:"-" }}</div>
     <div><strong>Well type:</strong><br>{{ proposal.well.get_well_type_display }} — {{ proposal.well.get_well_category_display }}</div>
-    <div><strong>KOP:</strong><br>{{ proposal.well.kop_m|default:"—" }} m · Incl {{ proposal.well.inclination_deg|default:"—" }}° / Az {{ proposal.well.azimuth_deg|default:"—" }}°</div>
+    <div><strong>KOP:</strong><br>{{ proposal.well.kop_m|default:"-" }} m · Incl {{ proposal.well.inclination_deg|default:"-" }}deg / Az {{ proposal.well.azimuth_deg|default:"-" }}deg</div>
+    <div><strong>Overlap Liner 7":</strong><br>{{ proposal.well.overlap_liner_7in_m|default:"-" }} m</div>
+    <div><strong>Overlap Liner 4.5":</strong><br>{{ proposal.well.overlap_liner_4in_m|default:"-" }} m</div>
+    <div><strong>Elevasi:</strong><br>{{ proposal.well.elevation_m|default:"-" }} m</div>
   </div>
 </div>
+
+{# ============ Formation Markers ============ #}
+{% if formation_markers %}
+<div class="card">
+  <h2>Formation Markers</h2>
+  <table class="table table-compact">
+    <thead><tr><th>#</th><th>Formation</th><th class="num">Depth (mMD)</th></tr></thead>
+    <tbody>
+      {% for fm in formation_markers %}
+      <tr><td>{{ fm.order }}</td><td>{{ fm.name }}</td><td class="num">{{ fm.depth_m }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 
 {# ============ Casing & activities ============ #}
 <div class="card">
@@ -125,8 +94,10 @@
       <tr>
         <th>#</th><th>Hole</th><th>OD</th><th>ID</th><th>Weight</th>
         <th class="num">Depth (m)</th>
+        <th>SG</th><th>Casing</th>
         <th class="num">Drilling (d)</th>
-        <th class="num">Non-drilling (d)</th>
+        <th class="num">Non-drill (d)</th>
+        <th class="num">Compl (d)</th>
         <th class="num">Total (d)</th>
         <th class="num">Rate (m/d)</th>
         <th>Mud</th><th></th>
@@ -137,15 +108,18 @@
       <tr>
         <td>{{ s.order }}</td>
         <td>{{ s.hole_section.label }}{% if s.is_completion %} <span class="status status-approved">C</span>{% endif %}</td>
-        <td>{{ s.od_csg|default:"—" }}</td>
-        <td>{{ s.id_csg|default:"—" }}</td>
-        <td>{{ s.weight_lbs_ft|default:"—" }}</td>
+        <td>{{ s.od_csg|default:"-" }}</td>
+        <td>{{ s.id_csg|default:"-" }}</td>
+        <td>{{ s.weight_lbs_ft|default:"-" }}</td>
         <td class="num">{{ s.depth_m }}</td>
+        <td>{{ s.sg_from|default:"" }}{% if s.sg_from %}-{{ s.sg_to|default:"" }}{% endif %}</td>
+        <td>{{ s.casing_type|default:"" }} {{ s.thread|default:"" }} {{ s.range_spec|default:"" }}</td>
         <td class="num">{{ s.drilling_days }}</td>
         <td class="num">{{ s.non_drilling_days }}</td>
+        <td class="num">{{ s.completion_days }}</td>
         <td class="num"><strong>{{ s.total_days }}</strong></td>
         <td class="num">{{ s.drilling_rate_m_per_day }}</td>
-        <td>{{ s.mud_type|default:"—" }}</td>
+        <td>{{ s.mud_type|default:"-" }}</td>
         <td>
           {% if can_edit %}
             <a class="btn btn-sm" href="{% url 'proposals:casing_activities' proposal.pk s.pk %}">Activities</a>
@@ -155,7 +129,7 @@
 
       {% if s.activities.count %}
       <tr>
-        <td colspan="12" style="padding: 0;">
+        <td colspan="15" style="padding: 0;">
           <table class="table table-compact" style="margin:0;">
             <thead>
               <tr><th>Aktivitas</th><th>Kategori</th><th>Tipe</th><th class="num">Jam</th><th class="num">Hari</th></tr>
@@ -164,7 +138,7 @@
               {% for a in s.activities.all %}
               <tr>
                 <td>{{ a.activity.description }}</td>
-                <td class="sub">{{ a.activity.category_l2.parent.name }} / {{ a.activity.category_l2.name }}</td>
+                <td class="sub">{{ a.activity.category_l2.parent.name }}</td>
                 <td>{{ a.activity.get_phase_type_display }}</td>
                 <td class="num">{{ a.effective_hours }}</td>
                 <td class="num">{{ a.effective_days }}</td>
@@ -176,11 +150,47 @@
       </tr>
       {% endif %}
     {% empty %}
-      <tr><td colspan="12" class="sub" style="text-align:center; padding:16px;">Belum ada casing section. <a href="{% url 'proposals:edit_casing' proposal.pk %}">Tambah sekarang</a>.</td></tr>
+      <tr><td colspan="15" class="sub" style="text-align:center; padding:16px;">Belum ada casing section. <a href="{% url 'proposals:edit_casing' proposal.pk %}">Tambah sekarang</a>.</td></tr>
     {% endfor %}
     </tbody>
   </table>
 </div>
+
+{# ============ Tubing Specs ============ #}
+{% if tubing_specs %}
+<div class="card">
+  <h2>Tubing Specification</h2>
+  <table class="table table-compact">
+    <thead><tr><th>OD (inch)</th><th>ID (inch)</th><th>Weight (lbs/ft)</th><th>Avg Length</th><th class="num">Depth (mMD)</th></tr></thead>
+    <tbody>
+      {% for t in tubing_specs %}
+      <tr>
+        <td>{{ t.od_inch|default:"-" }}</td>
+        <td>{{ t.id_inch|default:"-" }}</td>
+        <td>{{ t.weight|default:"-" }}</td>
+        <td>{{ t.avg_length|default:"-" }}</td>
+        <td class="num">{{ t.depth_md|default:"-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{# ============ Operational Rates ============ #}
+{% if operational_rates %}
+<div class="card">
+  <h2>Operational Rates</h2>
+  <table class="table table-compact">
+    <thead><tr><th>Parameter</th><th class="num">Value</th><th>Unit</th></tr></thead>
+    <tbody>
+      {% for r in operational_rates %}
+      <tr><td>{{ r.rate_name }}</td><td class="num">{{ r.value }}</td><td>{{ r.unit }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 
 {# ============ AFE Section ============ #}
 <div class="card">
@@ -240,7 +250,7 @@
         <td>{{ log.get_action_display }}</td>
         <td><span class="status status-{{ log.from_status|lower }}">{{ log.from_status }}</span></td>
         <td><span class="status status-{{ log.to_status|lower }}">{{ log.to_status }}</span></td>
-        <td>{{ log.comment|default:"—" }}</td>
+        <td>{{ log.comment|default:"-" }}</td>
       </tr>
       {% empty %}
       <tr><td colspan="6" class="sub" style="text-align:center;">Belum ada log approval.</td></tr>
@@ -275,12 +285,18 @@
 {{ chart_labels|json_script:"chart-labels" }}
 {{ chart_drilling|json_script:"chart-drilling" }}
 {{ chart_non_drilling|json_script:"chart-nondrilling" }}
+{{ chart_completion|json_script:"chart-completion" }}
+{{ cum_days|json_script:"cum-days" }}
+{{ cum_depth|json_script:"cum-depth" }}
 <script>
 document.addEventListener("DOMContentLoaded", function () {
   if (typeof Chart === "undefined") return;
   const labels = JSON.parse(document.getElementById("chart-labels").textContent);
   const drilling = JSON.parse(document.getElementById("chart-drilling").textContent);
   const nonDrilling = JSON.parse(document.getElementById("chart-nondrilling").textContent);
+  const completion = JSON.parse(document.getElementById("chart-completion").textContent);
+
+  // Stacked bar chart
   const ctx = document.getElementById("drillChart").getContext("2d");
   new Chart(ctx, {
     type: "bar",
@@ -289,6 +305,7 @@ document.addEventListener("DOMContentLoaded", function () {
       datasets: [
         { label: "Drilling days",     data: drilling,    backgroundColor: "#c8102e" },
         { label: "Non-drilling days", data: nonDrilling, backgroundColor: "#1d4ed8" },
+        { label: "Completion days",   data: completion,  backgroundColor: "#16a34a" },
       ],
     },
     options: {
@@ -297,6 +314,35 @@ document.addEventListener("DOMContentLoaded", function () {
       scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: "Days" } } },
     },
   });
+
+  // Drilling curve (depth vs days)
+  const cumDays = JSON.parse(document.getElementById("cum-days").textContent);
+  const cumDepth = JSON.parse(document.getElementById("cum-depth").textContent);
+  if (cumDays.length > 0) {
+    const ctx2 = document.getElementById("curveChart").getContext("2d");
+    new Chart(ctx2, {
+      type: "line",
+      data: {
+        labels: cumDays,
+        datasets: [{
+          label: "Depth (m)",
+          data: cumDepth,
+          borderColor: "#c8102e",
+          backgroundColor: "rgba(200,16,46,0.1)",
+          fill: true,
+          tension: 0.1,
+          pointRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { title: { display: true, text: "Cumulative Days" } },
+          y: { reverse: true, title: { display: true, text: "Depth (m)" } },
+        },
+      },
+    });
+  }
 });
 </script>
 

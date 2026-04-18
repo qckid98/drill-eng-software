@@ -6,27 +6,17 @@ source workbook (sheets `A.Proposal`, `Tab 1.0`, `Tab 2.0`, `Tab 3.0`, `Chart`).
 
 Rules implemented:
 
-1. Each ProposalActivity / ProposalPhaseActivity contributes `effective_hours`
-   (override or master default).
+1. Each ProposalActivity contributes `effective_hours` (override or master default).
 2. Per casing section:
      drilling_days      = Σ(hours of DRILLING activities)      / 24
      non_drilling_days  = Σ(hours of NON_DRILLING activities)  / 24
      completion_days    = Σ(hours of COMPLETION activities)    / 24
      total_days         = drilling + non_drilling + completion
      drilling_rate_m_per_day = interval_length_m / drilling_days  (safe division)
-3. Per proposal:
-     total_dryhole_days     = Σ total_days of sections where is_completion == False
-     total_completion_days  = Σ total_days of sections where is_completion == True
-     total_pre_spud_days    = Σ effective_hours of PRE_SPUD phase activities    / 24
-     total_rig_release_days = Σ effective_hours of RIG_RELEASE phase activities / 24
-     total_rig_days         = pre_spud + dryhole + completion + rig_release
-         ↑ matches Excel `A.Proposal!F31`:
-             =MAX(Chart!CA212:CA232) - MAX(Chart!BZ212:BZ232) + SUM(F29:J30)
-           which decomposes to (pre_spud + rig_release) + (dryhole + completion).
-           Sequential ops, NOT max — earlier comment about parallel ops was wrong.
-           Note: mob/demob already counted inside Pre Spud activities; mob_days
-           and demob_days fields on Proposal are kept for display/reference but
-           NOT added to total_rig_days.
+3. Per proposal (follows Excel Tab 3.0 CUM. RIG DAYS — sequential sum):
+     total_dryhole_days    = Σ total_days of sections where is_completion == False
+     total_completion_days = Σ total_days of sections where is_completion == True
+     total_rig_days        = Σ total_days of ALL sections + mob_days + demob_days
 """
 
 from dataclasses import dataclass
@@ -58,8 +48,6 @@ class SectionTotals:
 class ProposalTotals:
     total_dryhole_days: Decimal
     total_completion_days: Decimal
-    total_pre_spud_days: Decimal
-    total_rig_release_days: Decimal
     total_rig_days: Decimal
 
 
@@ -83,6 +71,11 @@ def calculate_section_totals(section) -> SectionTotals:
     completion_days = completion_hours / Decimal("24")
     total_days = drilling_days + non_drilling_days + completion_days
 
+    # TOL override: if tol_hours is set (>0), it REPLACES the non-drilling bucket.
+    if section.tol_hours and section.tol_hours > 0:
+        non_drilling_days = Decimal(section.tol_hours) / Decimal("24")
+        total_days = drilling_days + non_drilling_days + completion_days
+
     interval = section.interval_length_m
     if drilling_days > 0 and interval > 0:
         rate = interval / drilling_days
@@ -102,51 +95,39 @@ def recalculate_section(section, save: bool = True) -> SectionTotals:
     totals = calculate_section_totals(section)
     section.drilling_days = totals.drilling_days
     section.non_drilling_days = totals.non_drilling_days
+    section.completion_days = totals.completion_days
     section.total_days = totals.total_days
     section.drilling_rate_m_per_day = totals.drilling_rate_m_per_day
     if save:
         section.save(update_fields=[
-            "drilling_days", "non_drilling_days", "total_days",
-            "drilling_rate_m_per_day",
+            "drilling_days", "non_drilling_days", "completion_days",
+            "total_days", "drilling_rate_m_per_day",
         ])
     return totals
 
 
-def _phase_days(proposal, phase) -> Decimal:
-    """Sum effective_hours of all phase activities for a given phase, divided by 24."""
-    from ..models import ProposalPhaseActivity  # local import to avoid circular
-
-    total_hours = Decimal("0")
-    qs = ProposalPhaseActivity.objects.filter(
-        proposal=proposal, phase=phase
-    ).select_related("activity")
-    for pa in qs:
-        total_hours += pa.effective_hours or Decimal("0")
-    return total_hours / Decimal("24")
-
-
 def calculate_proposal_totals(proposal) -> ProposalTotals:
-    from ..models import ProposalPhase  # local import to avoid circular
-
     dryhole = Decimal("0")
     completion = Decimal("0")
+    sum_all_days = Decimal("0")
 
     for section in proposal.casing_sections.all():
         if section.is_completion:
             completion += section.total_days
         else:
             dryhole += section.total_days
+        sum_all_days += section.total_days
 
-    pre_spud = _phase_days(proposal, ProposalPhase.PRE_SPUD)
-    rig_release = _phase_days(proposal, ProposalPhase.RIG_RELEASE)
-
-    rig_days = pre_spud + dryhole + completion + rig_release
+    # Excel Tab 3.0 uses cumulative SUM for rig days (sequential operations)
+    rig_days = (
+        sum_all_days
+        + Decimal(proposal.mob_days or 0)
+        + Decimal(proposal.demob_days or 0)
+    )
 
     return ProposalTotals(
         total_dryhole_days=_q(dryhole, Q2),
         total_completion_days=_q(completion, Q2),
-        total_pre_spud_days=_q(pre_spud, Q2),
-        total_rig_release_days=_q(rig_release, Q2),
         total_rig_days=_q(rig_days, Q2),
     )
 
@@ -160,13 +141,9 @@ def recalculate_proposal(proposal, save: bool = True) -> ProposalTotals:
     totals = calculate_proposal_totals(proposal)
     proposal.total_dryhole_days = totals.total_dryhole_days
     proposal.total_completion_days = totals.total_completion_days
-    proposal.total_pre_spud_days = totals.total_pre_spud_days
-    proposal.total_rig_release_days = totals.total_rig_release_days
     proposal.total_rig_days = totals.total_rig_days
     if save:
         proposal.save(update_fields=[
-            "total_dryhole_days", "total_completion_days",
-            "total_pre_spud_days", "total_rig_release_days",
-            "total_rig_days",
+            "total_dryhole_days", "total_completion_days", "total_rig_days",
         ])
     return totals

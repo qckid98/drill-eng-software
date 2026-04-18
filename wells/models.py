@@ -50,6 +50,14 @@ class Well(models.Model):
     inclination_deg = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     azimuth_deg = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     kop_m = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    overlap_liner_7in_m = models.DecimalField(
+        "Overlap Liner 7\"", max_digits=8, decimal_places=2, null=True, blank=True,
+        help_text="Overlap liner 7 inch (mMD) — from A.Proposal row 24",
+    )
+    overlap_liner_4in_m = models.DecimalField(
+        "Overlap Liner 4.5\"", max_digits=8, decimal_places=2, null=True, blank=True,
+        help_text="Overlap liner 4.5 inch (mMD) — from A.Proposal row 25",
+    )
 
     # Liner overlap (Excel A.Proposal R20-R21) — used when there are 7" / 4-1/2" liners.
     overlap_liner_7_m = models.DecimalField(
@@ -70,3 +78,19 @@ class Well(models.Model):
         if self.location:
             return f"{self.name} — {self.location}"
         return self.name
+
+
+class FormationMarker(models.Model):
+    """Formation markers from A.Proposal rows 46-48 (Cisubuh, Parigi, CBA, etc.)."""
+
+    well = models.ForeignKey(Well, on_delete=models.CASCADE, related_name="formation_markers")
+    name = models.CharField(max_length=120, help_text="e.g. Cisubuh, Parigi, CBA")
+    depth_m = models.DecimalField(max_digits=10, decimal_places=2, help_text="Depth in mMD")
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["well_id", "order"]
+        unique_together = [("well", "name")]
+
+    def __str__(self):
+        return f"{self.name} @ {self.depth_m} mMD"

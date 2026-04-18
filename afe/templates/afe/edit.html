@@ -67,6 +67,7 @@
           <th class="num">Calculated</th>
           <th class="num">Override (USD)</th>
           <th>Notes</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -94,6 +95,13 @@
               {% if not line.template.is_subtotal_row %}
                 {{ form.notes }}
                 {{ form.notes.errors }}
+              {% endif %}
+            </td>
+            <td>
+              {% if not line.template.is_subtotal_row %}
+                <a class="btn btn-sm" href="{% url 'afe:line_components' afe.pk line.pk %}">
+                  Components{% if line.components.count %} ({{ line.components.count }}){% endif %}
+                </a>
               {% endif %}
             </td>
           </tr>

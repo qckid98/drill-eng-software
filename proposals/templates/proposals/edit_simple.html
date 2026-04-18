@@ -7,11 +7,37 @@
 <form method="post" class="form">
   {% csrf_token %}
   <div class="card">
-    <div class="grid grid-3">
-      {% for field in form %}
-        <label><span>{{ field.label }}</span>{{ field }}</label>
-      {% endfor %}
-    </div>
+    {% if formset %}
+      {# Inline formset mode #}
+      {{ formset.management_form }}
+      <table class="table">
+        <thead>
+          <tr>
+            {% for field in formset.forms.0.visible_fields %}
+              <th>{{ field.label }}</th>
+            {% endfor %}
+            <th>Hapus</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in formset %}
+          <tr>
+            {% for field in f.visible_fields %}
+              <td>{{ field }}</td>
+            {% endfor %}
+            <td>{% if f.instance.pk %}{{ f.DELETE }}{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% elif form %}
+      {# Single form mode #}
+      <div class="grid grid-3">
+        {% for field in form %}
+          <label><span>{{ field.label }}</span>{{ field }}</label>
+        {% endfor %}
+      </div>
+    {% endif %}
   </div>
   <div style="display:flex; gap:8px; justify-content:flex-end;">
     <a href="{% url 'proposals:detail' proposal.pk %}" class="btn">Batal</a>

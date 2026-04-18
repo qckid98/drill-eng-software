@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q
@@ -7,10 +9,27 @@ from django.views.decorators.http import require_http_methods
 
 from proposals.models import Proposal, ProposalStatus
 
-from .forms import AFEApprovalActionForm, AFEHeaderForm, AFELineFormSet
-from .models import AFE, AFECategory, AFEStatus, AFETemplate
+from .forms import (
+    AFEApprovalActionForm,
+    AFEHeaderForm,
+    AFELineComponentFormSet,
+    AFELineFormSet,
+    RateCardItemForm,
+    RateCardUploadForm,
+)
+from .models import AFE, AFECategory, AFELine, AFEStatus, AFETemplate, RateCardItem, RateCardImportLog
 from .services import approval
 from .services.calc import generate_afe_from_proposal, recalculate_afe
+
+
+# ---------------------------------------------------------------------------
+# Permission helpers
+# ---------------------------------------------------------------------------
+def _require_rate_card_access(user):
+    """Only Admin and Management can manage rate cards."""
+    if user.is_superuser or getattr(user, "is_admin_role", False) or getattr(user, "is_management", False):
+        return None
+    return HttpResponseForbidden("Hanya Admin dan Management yang dapat mengelola daftar harga.")
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +58,12 @@ def dashboard(request):
         "status_choices": AFEStatus.choices,
         "current_status": status,
         "q": q,
+        "rate_card_count": RateCardItem.objects.count(),
+        "can_manage_rates": (
+            request.user.is_superuser
+            or getattr(request.user, "is_admin_role", False)
+            or getattr(request.user, "is_management", False)
+        ),
     })
 
 
@@ -86,19 +111,8 @@ def afe_create(request, proposal_pk):
 
 
 # ---------------------------------------------------------------------------
-# Detail / edit
+# Detail
 # ---------------------------------------------------------------------------
-def _group_lines(afe: AFE):
-    """Return list of lines with derived display attrs grouped by section."""
-    lines = (afe.lines
-             .select_related("template", "rate_card_item")
-             .order_by("template__order", "template__line_code"))
-    groups = {}
-    for line in lines:
-        groups.setdefault(line.template.section, []).append(line)
-    return groups
-
-
 @login_required
 def afe_detail(request, pk):
     afe = get_object_or_404(
@@ -107,6 +121,7 @@ def afe_detail(request, pk):
     )
     lines = (afe.lines
              .select_related("template", "rate_card_item")
+             .prefetch_related("components")
              .order_by("template__order", "template__line_code"))
 
     # Donut chart: breakdown by section (non-subtotal lines only)
@@ -134,6 +149,9 @@ def afe_detail(request, pk):
     })
 
 
+# ---------------------------------------------------------------------------
+# Edit AFE header + lines
+# ---------------------------------------------------------------------------
 @login_required
 def afe_edit(request, pk):
     afe = get_object_or_404(AFE, pk=pk)
@@ -155,8 +173,8 @@ def afe_edit(request, pk):
         header_form = AFEHeaderForm(instance=afe)
         formset = AFELineFormSet(instance=afe)
 
-    # Pair each form with its underlying line for the template (need template meta)
-    lines_by_id = {l.id: l for l in afe.lines.select_related("template")}
+    # Pair each form with its underlying line for the template
+    lines_by_id = {l.id: l for l in afe.lines.select_related("template").prefetch_related("components")}
     rows = []
     for form in formset.forms:
         line = lines_by_id.get(form.instance.pk)
@@ -170,6 +188,43 @@ def afe_edit(request, pk):
     })
 
 
+# ---------------------------------------------------------------------------
+# Edit components per AFE line
+# ---------------------------------------------------------------------------
+@login_required
+def afe_line_components(request, pk, line_pk):
+    afe = get_object_or_404(AFE, pk=pk)
+    line = get_object_or_404(AFELine.objects.select_related("template"), pk=line_pk, afe=afe)
+    if not afe.can_edit(request.user):
+        return HttpResponseForbidden("AFE tidak dapat diedit pada status saat ini.")
+
+    if request.method == "POST":
+        formset = AFELineComponentFormSet(request.POST, instance=line)
+        if formset.is_valid():
+            formset.save()
+            # Recalculate line total from components
+            comp_total = sum(c.total_usd for c in line.components.all())
+            if comp_total > 0:
+                line.calculated_usd = comp_total
+                line.save(update_fields=["calculated_usd"])
+            recalculate_afe(afe)
+            messages.success(request, f"Components untuk '{line.template.name}' disimpan.")
+            if "save_and_continue" in request.POST:
+                return redirect("afe:line_components", pk=pk, line_pk=line_pk)
+            return redirect("afe:edit", pk=pk)
+    else:
+        formset = AFELineComponentFormSet(instance=line)
+
+    return render(request, "afe/edit_components.html", {
+        "afe": afe,
+        "line": line,
+        "formset": formset,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Regenerate AFE from rate cards
+# ---------------------------------------------------------------------------
 @login_required
 @require_http_methods(["POST"])
 def afe_regenerate(request, pk):
@@ -181,6 +236,9 @@ def afe_regenerate(request, pk):
     return redirect("afe:edit", pk=pk)
 
 
+# ---------------------------------------------------------------------------
+# Approval actions
+# ---------------------------------------------------------------------------
 @login_required
 @require_http_methods(["POST"])
 def afe_action(request, pk):
@@ -210,3 +268,205 @@ def afe_action(request, pk):
         messages.error(request, str(exc))
 
     return redirect("afe:detail", pk=pk)
+
+
+# ===========================================================================
+# RATE CARD MANAGEMENT (Admin + Management only)
+# ===========================================================================
+
+@login_required
+def rate_card_list(request):
+    denied = _require_rate_card_access(request.user)
+    if denied:
+        return denied
+
+    q = request.GET.get("q", "").strip()
+    afe_line_id = request.GET.get("afe_line", "")
+    phase = request.GET.get("phase", "")
+
+    qs = RateCardItem.objects.select_related("afe_line").all()
+    if q:
+        qs = qs.filter(Q(code__icontains=q) | Q(description__icontains=q))
+    if afe_line_id:
+        qs = qs.filter(afe_line_id=afe_line_id)
+    if phase:
+        qs = qs.filter(phase_flag=phase)
+
+    afe_lines = AFETemplate.objects.filter(is_subtotal_row=False).order_by("order")
+
+    return render(request, "afe/rate_cards.html", {
+        "items": qs[:500],
+        "q": q,
+        "afe_lines": afe_lines,
+        "current_afe_line": afe_line_id,
+        "current_phase": phase,
+        "total_count": RateCardItem.objects.count(),
+    })
+
+
+@login_required
+def rate_card_create(request):
+    denied = _require_rate_card_access(request.user)
+    if denied:
+        return denied
+
+    if request.method == "POST":
+        form = RateCardItemForm(request.POST)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Rate card item ditambahkan.")
+            return redirect("afe:rate_card_list")
+    else:
+        form = RateCardItemForm()
+
+    return render(request, "afe/rate_card_form.html", {
+        "form": form,
+        "title": "Tambah Rate Card Item",
+        "is_new": True,
+    })
+
+
+@login_required
+def rate_card_edit(request, pk):
+    denied = _require_rate_card_access(request.user)
+    if denied:
+        return denied
+
+    item = get_object_or_404(RateCardItem, pk=pk)
+    if request.method == "POST":
+        form = RateCardItemForm(request.POST, instance=item)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"Rate card '{item.code}' diperbarui.")
+            return redirect("afe:rate_card_list")
+    else:
+        form = RateCardItemForm(instance=item)
+
+    return render(request, "afe/rate_card_form.html", {
+        "form": form,
+        "item": item,
+        "title": f"Edit Rate Card: {item.code}",
+        "is_new": False,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def rate_card_delete(request, pk):
+    denied = _require_rate_card_access(request.user)
+    if denied:
+        return denied
+
+    item = get_object_or_404(RateCardItem, pk=pk)
+    code = item.code
+    item.delete()
+    messages.success(request, f"Rate card '{code}' dihapus.")
+    return redirect("afe:rate_card_list")
+
+
+@login_required
+def rate_card_upload(request):
+    denied = _require_rate_card_access(request.user)
+    if denied:
+        return denied
+
+    if request.method == "POST":
+        form = RateCardUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            excel_file = request.FILES["excel_file"]
+            try:
+                created, updated = _process_rate_card_upload(excel_file)
+                RateCardImportLog.objects.create(
+                    uploaded_by=request.user,
+                    file_name=excel_file.name,
+                    items_created=created,
+                    items_updated=updated,
+                    notes=f"Uploaded via web UI",
+                )
+                messages.success(
+                    request,
+                    f"Import selesai: {created} item baru, {updated} item diperbarui.",
+                )
+            except Exception as exc:
+                messages.error(request, f"Error saat import: {exc}")
+            return redirect("afe:rate_card_list")
+    else:
+        form = RateCardUploadForm()
+
+    recent_logs = RateCardImportLog.objects.all()[:10]
+    return render(request, "afe/rate_card_upload.html", {
+        "form": form,
+        "recent_logs": recent_logs,
+    })
+
+
+def _process_rate_card_upload(excel_file) -> tuple[int, int]:
+    """Parse D.MATE sheet from uploaded Excel and upsert RateCardItem records."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(excel_file, data_only=True, read_only=True)
+
+    # Try to find D.MATE or E.COMP sheet
+    sheet_name = None
+    for candidate in ("D.MATE", "D-A_MEP", "E.COMP"):
+        if candidate in wb.sheetnames:
+            sheet_name = candidate
+            break
+    if sheet_name is None:
+        raise ValueError(f"Sheet D.MATE atau E.COMP tidak ditemukan. Sheets: {wb.sheetnames}")
+
+    ws = wb[sheet_name]
+    created = 0
+    updated = 0
+
+    # Build AFETemplate lookup
+    templates_by_code = {}
+    for tpl in AFETemplate.objects.filter(is_subtotal_row=False):
+        templates_by_code[tpl.line_code] = tpl
+
+    if sheet_name == "E.COMP":
+        # E.COMP format: col F(5)=AFE NO, col G(6)=description, col Q(16)=qty,
+        # col S(18)=UoM, col T(19)=unit_price, col V(21)=material/non-material
+        for row in ws.iter_rows(min_row=15, values_only=True):
+            if not row or len(row) < 20:
+                continue
+            afe_no = row[5] if len(row) > 5 else None
+            desc = row[6] if len(row) > 6 else None
+            qty = row[16] if len(row) > 16 else None
+            uom = row[18] if len(row) > 18 else None
+            price = row[19] if len(row) > 19 else None
+            mat_type = row[21] if len(row) > 21 else None
+
+            if not desc or not price:
+                continue
+            desc_str = str(desc).strip()
+            if not desc_str or "SUB TOTAL" in desc_str.upper():
+                continue
+
+            try:
+                price_dec = Decimal(str(price).strip())
+            except (InvalidOperation, ValueError):
+                continue
+
+            afe_no_str = str(int(afe_no)) if isinstance(afe_no, (int, float)) else str(afe_no or "")
+            template = templates_by_code.get(afe_no_str)
+
+            code = f"EC-{afe_no_str}-{created + updated + 1}"
+
+            _, was_created = RateCardItem.objects.update_or_create(
+                code=code[:30],
+                description=desc_str[:300],
+                defaults={
+                    "unit_of_measure": str(uom or "")[:30],
+                    "unit_price_usd": price_dec,
+                    "afe_line": template,
+                    "material_type": str(mat_type or "")[:30],
+                    "source_sheet": sheet_name,
+                },
+            )
+            if was_created:
+                created += 1
+            else:
+                updated += 1
+
+    return created, updated

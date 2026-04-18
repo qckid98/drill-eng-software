@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Buat Proposal dari Template{% endblock %}
+{% block content %}
+<h1 class="page-title">Buat Proposal dari Template</h1>
+<p class="sub">Template: <strong>{{ template.title }}</strong> — {{ template.well.name }} {{ template.well.location }}</p>
+<p class="sub">
+  Template ini memiliki {{ template.casing_sections.count }} casing section
+  dan {{ template.total_rig_days }} rig days.
+  Data casing, activities, tubing, dan operational rates akan di-copy ke proposal baru.
+</p>
+
+<form method="post" class="form">
+  {% csrf_token %}
+  <div class="card">
+    <h2>Data Well Baru</h2>
+    <p class="sub">Isi data well untuk proposal baru. Data lain akan di-copy dari template.</p>
+    <div class="grid grid-3">
+      {% for field in well_form %}
+        <label><span>{{ field.label }}</span>{{ field }}
+          {% if field.errors %}<span class="error">{{ field.errors.0 }}</span>{% endif %}
+        </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'proposals:dashboard' %}" class="btn">Batal</a>
+    <button class="btn btn-primary">Buat Proposal</button>
+  </div>
+</form>
+{% endblock %}

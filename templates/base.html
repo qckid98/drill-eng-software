@@ -22,6 +22,9 @@
         <a href="{% url 'proposals:inbox' %}">Inbox Proposal</a>
         <a href="{% url 'afe:dashboard' %}">AFE</a>
         <a href="{% url 'afe:inbox' %}">Inbox AFE</a>
+        {% if user.is_management or user.is_admin_role %}
+          <a href="{% url 'afe:rate_card_list' %}">Daftar Harga</a>
+        {% endif %}
         {% if user.is_engineer or user.is_admin_role %}
           <a href="{% url 'proposals:create' %}" class="btn btn-primary btn-sm">+ Proposal Baru</a>
         {% endif %}

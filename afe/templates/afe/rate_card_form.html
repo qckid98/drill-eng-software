@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+
+<h1 class="page-title">{{ title }}</h1>
+
+<form method="post" class="form">
+  {% csrf_token %}
+
+  {% if form.errors %}
+  <div class="alert alert-error">
+    <strong>Form tidak valid — perbaiki kesalahan di bawah.</strong>
+    {{ form.non_field_errors }}
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="grid grid-3">
+      {% for field in form %}
+      <label>
+        <span>{{ field.label }}{% if field.field.required %} *{% endif %}</span>
+        {{ field }}
+        {% if field.errors %}<span class="error">{{ field.errors.0 }}</span>{% endif %}
+        {% if field.help_text %}<small class="sub">{{ field.help_text }}</small>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'afe:rate_card_list' %}" class="btn">Batal</a>
+    {% if not is_new %}
+    <form method="post" action="{% url 'afe:rate_card_delete' item.pk %}" style="display:inline;"
+          onsubmit="return confirm('Hapus rate card ini?')">
+      {% csrf_token %}
+      <button class="btn btn-danger">Hapus</button>
+    </form>
+    {% endif %}
+    <button class="btn btn-primary">Simpan</button>
+  </div>
+</form>
+
+{% endblock %}

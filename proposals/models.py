@@ -28,6 +28,7 @@ class ProposalStatus(models.TextChoices):
     APPROVED = "APPROVED", "Approved"
     REJECTED = "REJECTED", "Rejected"
     REVISION = "REVISION", "Revision requested"
+    TEMPLATE = "TEMPLATE", "Template"
 
 
 class Proposal(models.Model):
@@ -35,14 +36,6 @@ class Proposal(models.Model):
     doc_number = models.CharField(max_length=60, unique=True, blank=True)
     version = models.CharField(max_length=20, default="2.4/2017")
     title = models.CharField(max_length=200, blank=True)
-    no_afe = models.CharField(
-        "No. AFE", max_length=60, blank=True,
-        help_text="No. AFE referensi (Excel A.Proposal R5).",
-    )
-    well_status = models.CharField(
-        max_length=60, blank=True,
-        help_text="Status well saat proposal dibuat (Excel A.Proposal R8).",
-    )
 
     # ---------------- relationships ----------------
     well = models.ForeignKey(Well, on_delete=models.PROTECT, related_name="proposals")
@@ -56,27 +49,14 @@ class Proposal(models.Model):
     )
 
     # ---------------- dates & scheduling ----------------
+    date_input = models.DateField(
+        null=True, blank=True,
+        help_text="Tanggal input proposal (DD-MMM-YYYY dari A.Proposal row 9)",
+    )
     spud_date = models.DateField(null=True, blank=True)
     completion_date = models.DateField(null=True, blank=True)
-    placed_into_service = models.DateTimeField(
-        null=True, blank=True,
-        help_text="Tanggal sumur masuk service (Excel A.Proposal R12).",
-    )
-    closed_out_date = models.DateTimeField(
-        null=True, blank=True,
-        help_text="Tanggal close-out proposal (Excel A.Proposal R13).",
-    )
     mob_days = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     demob_days = models.DecimalField(max_digits=6, decimal_places=2, default=0)
-    jarak_moving_km = models.DecimalField(
-        "Jarak moving (km)", max_digits=8, decimal_places=2, null=True, blank=True,
-        help_text="Jarak rig moving dari lokasi sebelumnya (km).",
-    )
-    interval_total_perfo_m = models.DecimalField(
-        "Interval total perforasi (m)", max_digits=8, decimal_places=2,
-        null=True, blank=True,
-        help_text="Total panjang interval perforasi (Excel A.Proposal R76).",
-    )
     dollar_rate = models.DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True,
         help_text="USD/IDR exchange rate at time of proposal",
@@ -93,8 +73,6 @@ class Proposal(models.Model):
     # ---------------- cached totals (refreshed by calc.py) ----------------
     total_dryhole_days = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_completion_days = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    total_pre_spud_days = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    total_rig_release_days = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_rig_days = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -135,6 +113,51 @@ class Proposal(models.Model):
     def can_approve(self, user) -> bool:
         return self.status == ProposalStatus.UNDER_REVIEW and user.is_management
 
+    @property
+    def is_template(self) -> bool:
+        return self.status == ProposalStatus.TEMPLATE
+
+    def clone_from_template(self, user, well):
+        """Create a new DRAFT proposal by cloning this template."""
+        if not self.is_template:
+            raise ValueError("Can only clone from a TEMPLATE proposal.")
+        new_proposal = Proposal.objects.create(
+            well=well,
+            rig=self.rig,
+            created_by=user,
+            version=self.version,
+            title=f"Copy of {self.title}",
+            mob_days=self.mob_days,
+            demob_days=self.demob_days,
+            status=ProposalStatus.DRAFT,
+        )
+        # Clone casing sections and their activities
+        for section in self.casing_sections.all():
+            old_section_pk = section.pk
+            section.pk = None
+            section.proposal = new_proposal
+            section.save()
+            # Clone activities for this section
+            from proposals.models import ProposalActivity
+            old_activities = ProposalActivity.objects.filter(
+                casing_section_id=old_section_pk
+            ).select_related("activity")
+            for act in old_activities:
+                act.pk = None
+                act.casing_section = section
+                act.save()
+        # Clone tubing specs
+        for tubing in self.tubing_specs.all():
+            tubing.pk = None
+            tubing.proposal = new_proposal
+            tubing.save()
+        # Clone operational rates
+        for rate in self.operational_rates.all():
+            rate.pk = None
+            rate.proposal = new_proposal
+            rate.save()
+        return new_proposal
+
 
 class CasingSection(models.Model):
     """A single row in the casing design table (Section 3 of A.Proposal)."""
@@ -150,20 +173,12 @@ class CasingSection(models.Model):
     id_csg = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True)
     weight_lbs_ft = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     depth_m = models.DecimalField(max_digits=10, decimal_places=2)
-    top_of_liner_m = models.DecimalField(
-        max_digits=8, decimal_places=2, null=True, blank=True,
-        help_text="Top of Liner (mMD). Hanya diisi untuk casing liner; kosong untuk casing penuh.",
+    tol_hours = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        help_text="Time on Location override (hours). Leave 0 to use activity sum.",
     )
     mud_type = models.ForeignKey(
         MudType, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
-    )
-    sg_from = models.DecimalField(
-        "SG from", max_digits=5, decimal_places=2, null=True, blank=True,
-        help_text="Mud specific gravity minimum (per-section).",
-    )
-    sg_to = models.DecimalField(
-        "SG to", max_digits=5, decimal_places=2, null=True, blank=True,
-        help_text="Mud specific gravity maximum (per-section).",
     )
     is_completion = models.BooleanField(
         default=False,
@@ -171,9 +186,46 @@ class CasingSection(models.Model):
     )
     notes = models.CharField(max_length=255, blank=True)
 
+    # --- Casing properties (from A.Proposal blue cells rows 36-43) ---
+    sg_from = models.DecimalField(
+        "SG From", max_digits=6, decimal_places=3, null=True, blank=True,
+        help_text="Mud specific gravity lower bound",
+    )
+    sg_to = models.DecimalField(
+        "SG To", max_digits=6, decimal_places=3, null=True, blank=True,
+        help_text="Mud specific gravity upper bound",
+    )
+    casing_type = models.CharField(
+        max_length=30, blank=True,
+        help_text="Casing grade, e.g. K-55, N-80",
+    )
+    pounder = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        help_text="Casing weight (lbs/ft) — pounder column",
+    )
+    thread = models.CharField(
+        max_length=30, blank=True,
+        help_text="Thread type, e.g. BTC, LTC, STC",
+    )
+    range_spec = models.CharField(
+        max_length=20, blank=True,
+        help_text="Casing range, e.g. R-1, R-2, R-3",
+    )
+    casing_title = models.CharField(
+        max_length=255, blank=True,
+        help_text="Auto-generated casing summary, e.g. 13 3/8'' Csg, K-55, 54.5 ppf, BTC, R-3 at 734 mMD",
+    )
+
+    # --- Section type (from Tab 2.0 grouping) ---
+    section_type = models.CharField(
+        max_length=200, blank=True,
+        help_text="Drilling section type from Tab 2.0, e.g. PRESPUD PREPARATION W/ ENDURANCE TEST",
+    )
+
     # cached totals (refreshed by calc.py whenever activities change)
     drilling_days = models.DecimalField(max_digits=8, decimal_places=3, default=0)
     non_drilling_days = models.DecimalField(max_digits=8, decimal_places=3, default=0)
+    completion_days = models.DecimalField(max_digits=8, decimal_places=3, default=0)
     total_days = models.DecimalField(max_digits=8, decimal_places=3, default=0)
     drilling_rate_m_per_day = models.DecimalField(
         max_digits=10, decimal_places=2, default=0
@@ -184,6 +236,21 @@ class CasingSection(models.Model):
 
     def __str__(self):
         return f"{self.hole_section} @ {self.depth_m} m"
+
+    def build_casing_title(self):
+        """Auto-generate casing title from component fields."""
+        parts = [f"{self.od_csg}'' Csg" if self.od_csg else ""]
+        if self.casing_type:
+            parts.append(self.casing_type)
+        if self.weight_lbs_ft:
+            parts.append(f"{self.weight_lbs_ft} ppf")
+        if self.thread:
+            parts.append(self.thread)
+        if self.range_spec:
+            parts.append(self.range_spec)
+        if self.depth_m:
+            parts.append(f"at {self.depth_m} mMD")
+        return ", ".join(p for p in parts if p)
 
     @property
     def previous_depth(self) -> Decimal:
@@ -236,14 +303,12 @@ class ProposalActivity(models.Model):
         return (self.effective_hours / Decimal("24")).quantize(Decimal("0.001"))
 
 
-class TubingItem(models.Model):
-    """
-    One tubing string per proposal — multiple rows allowed (e.g. 3-1/2", 2-7/8", 2-3/8").
-    Replaces the old 1-to-1 TubingSpec model.
-    """
+class TubingSpec(models.Model):
+    """Production string tubing specification (Section 4 of A.Proposal).
+    Multiple rows per proposal (Excel has 3.5", 2.875", 2.375")."""
 
     proposal = models.ForeignKey(
-        Proposal, on_delete=models.CASCADE, related_name="tubing_items"
+        Proposal, on_delete=models.CASCADE, related_name="tubing_specs"
     )
     order = models.PositiveIntegerField(default=0)
     od_inch = models.DecimalField(
@@ -252,15 +317,9 @@ class TubingItem(models.Model):
     id_inch = models.DecimalField(
         "ID (inch)", max_digits=6, decimal_places=3, null=True, blank=True
     )
-    weight_lbs_ft = models.DecimalField(
-        "Weight (lbs/ft)", max_digits=6, decimal_places=2, null=True, blank=True
-    )
-    avg_length_m = models.DecimalField(
-        "Avg length (m)", max_digits=6, decimal_places=2, null=True, blank=True
-    )
-    depth_md = models.DecimalField(
-        "Depth MD (m)", max_digits=10, decimal_places=2, null=True, blank=True
-    )
+    weight = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    avg_length = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    depth_md = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     class Meta:
         ordering = ["proposal_id", "order"]
@@ -269,41 +328,29 @@ class TubingItem(models.Model):
         return f"Tubing {self.od_inch}\" @ {self.depth_md} m"
 
 
-class FormationMarker(models.Model):
-    """Formation markers (e.g. Cisubuh @80, Parigi @758)."""
+class OperationalRate(models.Model):
+    """Operational rates from A.Proposal (rows 46-50, cols P-W).
+    Used in drilling time calculations for tripping, casing running, etc."""
 
     proposal = models.ForeignKey(
-        Proposal, on_delete=models.CASCADE, related_name="formation_markers"
+        Proposal, on_delete=models.CASCADE, related_name="operational_rates"
+    )
+    rate_name = models.CharField(
+        max_length=120,
+        help_text="e.g. LENGTH PER STAND, RATE FOR RIH/POOH BHA & TBG",
+    )
+    value = models.DecimalField(max_digits=10, decimal_places=2)
+    unit = models.CharField(
+        max_length=30,
+        help_text="e.g. MTR, MIN/STDS, MIN/JTS",
     )
     order = models.PositiveIntegerField(default=0)
-    name = models.CharField(max_length=120, help_text="e.g. Cisubuh, Parigi, CBA")
-    depth_md = models.DecimalField(
-        "Depth MD (m)", max_digits=10, decimal_places=2
-    )
 
     class Meta:
         ordering = ["proposal_id", "order"]
 
     def __str__(self):
-        return f"{self.name} @ {self.depth_md} m"
-
-
-class TubeLengthRange(models.Model):
-    """Average of tube length per range (R-1, R-2, R-3, SP) — Excel A.Proposal."""
-
-    proposal = models.ForeignKey(
-        Proposal, on_delete=models.CASCADE, related_name="tube_length_ranges"
-    )
-    label = models.CharField(max_length=10, help_text="R-1, R-2, R-3, SP")
-    avg_length_m = models.DecimalField(
-        "Avg length (m)", max_digits=6, decimal_places=2
-    )
-
-    class Meta:
-        ordering = ["proposal_id", "label"]
-
-    def __str__(self):
-        return f"{self.label}: {self.avg_length_m} m"
+        return f"{self.rate_name}: {self.value} {self.unit}"
 
 
 class CompletionSpec(models.Model):
@@ -315,82 +362,17 @@ class CompletionSpec(models.Model):
     salt_type = models.CharField(max_length=60, blank=True, default="CaCl2")
     sg = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True)
     yield_value = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True)
-    packaging_kg_per_sax = models.DecimalField(
-        "Packaging (kg/sax)", max_digits=6, decimal_places=2, null=True, blank=True,
+    volume = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        help_text="Completion fluid volume (bbls)",
+    )
+    coring_depth_from = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True
+    )
+    coring_depth_to = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True
     )
     perforation_intervals = models.TextField(blank=True)
-
-
-class CoringInterval(models.Model):
-    """Up to 12 coring intervals per proposal (Excel A.Proposal R63-R75)."""
-
-    completion_spec = models.ForeignKey(
-        CompletionSpec, on_delete=models.CASCADE, related_name="coring_intervals"
-    )
-    order = models.PositiveIntegerField(default=0)
-    depth_from_m = models.DecimalField(
-        "Depth from (m)", max_digits=10, decimal_places=2, null=True, blank=True,
-    )
-    depth_to_m = models.DecimalField(
-        "Depth to (m)", max_digits=10, decimal_places=2, null=True, blank=True,
-    )
-    coring_mtrg_m = models.DecimalField(
-        "Coring meterage (m)", max_digits=8, decimal_places=2, null=True, blank=True,
-    )
-    oh_section_inch = models.DecimalField(
-        "OH section (inch)", max_digits=6, decimal_places=3, null=True, blank=True,
-    )
-
-    class Meta:
-        ordering = ["completion_spec_id", "order"]
-
-    def __str__(self):
-        return f"Coring {self.depth_from_m}–{self.depth_to_m} m"
-
-
-class ProposalPhase(models.TextChoices):
-    """Fase proposal-level yang tidak terikat casing section (sesuai Tab 2.0 Excel)."""
-    PRE_SPUD = "PRE_SPUD", "Pre Spud"
-    RIG_RELEASE = "RIG_RELEASE", "Rig Release"
-
-
-class ProposalPhaseActivity(models.Model):
-    """
-    Aktivitas Pre Spud / Rig Release. Di Excel `Tab 2.0` aktivitas-aktivitas ini
-    muncul tanpa hole section (kolom HOLE SECTION = "Pre Spud" atau "Rig Release"),
-    jadi tidak bisa di-attach ke `CasingSection`.
-    """
-
-    proposal = models.ForeignKey(
-        Proposal, on_delete=models.CASCADE, related_name="phase_activities"
-    )
-    phase = models.CharField(max_length=20, choices=ProposalPhase.choices)
-    activity = models.ForeignKey(
-        DrillingActivity, on_delete=models.PROTECT, related_name="+"
-    )
-    order = models.PositiveIntegerField(default=0)
-    hours_override = models.DecimalField(
-        max_digits=8, decimal_places=2, null=True, blank=True,
-        help_text="Leave blank to use the default hours from the master activity.",
-    )
-    notes = models.CharField(max_length=255, blank=True)
-
-    class Meta:
-        ordering = ["proposal_id", "phase", "order"]
-        indexes = [models.Index(fields=["proposal", "phase"])]
-
-    def __str__(self):
-        return f"{self.proposal} — {self.get_phase_display()} — {self.activity}"
-
-    @property
-    def effective_hours(self) -> Decimal:
-        if self.hours_override is not None:
-            return self.hours_override
-        return self.activity.default_hours
-
-    @property
-    def effective_days(self) -> Decimal:
-        return (self.effective_hours / Decimal("24")).quantize(Decimal("0.001"))
 
 
 class ApprovalAction(models.TextChoices):

@@ -28,8 +28,8 @@ def _section_changed(sender, instance: CasingSection, **kwargs):
     # which still triggers post_save. Detect that case by checking update_fields.
     update_fields = kwargs.get("update_fields") or set()
     cached_only = {
-        "drilling_days", "non_drilling_days", "total_days",
-        "drilling_rate_m_per_day",
+        "drilling_days", "non_drilling_days", "completion_days",
+        "total_days", "drilling_rate_m_per_day",
     }
     if update_fields and set(update_fields).issubset(cached_only):
         return

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Edit Components — {{ line.template.name }}{% endblock %}
+{% block content %}
+
+<h1 class="page-title">Edit Components</h1>
+<p class="sub">
+  AFE: <a href="{% url 'afe:edit' afe.pk %}">{{ afe.doc_number }}</a>
+  · Line {{ line.template.line_code }}: <strong>{{ line.template.name }}</strong>
+  · Calculated: ${{ line.calculated_usd|floatformat:2 }}
+</p>
+
+<form method="post">
+  {% csrf_token %}
+  {{ formset.management_form }}
+
+  <div class="card">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:30px">#</th>
+          <th>Description</th>
+          <th class="num">Qty</th>
+          <th>UoM</th>
+          <th class="num">Unit Price (USD)</th>
+          <th>Material Type</th>
+          <th>Phase</th>
+          <th>Hapus</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for form in formset %}
+        <tr>
+          <td>{{ form.order }}{{ form.id }}</td>
+          <td>{{ form.description }}</td>
+          <td class="num">{{ form.quantity }}</td>
+          <td>{{ form.unit_of_measure }}</td>
+          <td class="num">{{ form.unit_price_usd }}</td>
+          <td>{{ form.material_type }}</td>
+          <td>{{ form.phase_flag }}</td>
+          <td>{% if form.instance.pk %}{{ form.DELETE }}{% endif %}</td>
+        </tr>
+        {% if form.errors %}
+        <tr><td colspan="8"><div class="alert alert-error">{{ form.errors }}</div></td></tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div style="display:flex; gap:8px; justify-content:flex-end;">
+    <a href="{% url 'afe:edit' afe.pk %}" class="btn">Kembali ke AFE</a>
+    <button type="submit" name="save_and_continue" value="1" class="btn">Simpan & Lanjut Edit</button>
+    <button type="submit" class="btn btn-primary">Simpan</button>
+  </div>
+</form>
+
+{% endblock %}

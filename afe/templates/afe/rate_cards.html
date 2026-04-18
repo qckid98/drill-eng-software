@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Daftar Harga (Rate Cards){% endblock %}
+{% block content %}
+
+<div style="display:flex; justify-content:space-between; align-items:center; gap:16px;">
+  <div>
+    <h1 class="page-title">Daftar Harga (Rate Cards)</h1>
+    <p class="sub">{{ total_count }} item terdaftar. Kelola harga satuan untuk kalkulasi AFE.</p>
+  </div>
+  <div style="display:flex; gap:8px;">
+    <a href="{% url 'afe:rate_card_create' %}" class="btn btn-primary">+ Tambah Item</a>
+    <a href="{% url 'afe:rate_card_upload' %}" class="btn">Upload dari Excel</a>
+  </div>
+</div>
+
+{# ---- Filter bar ---- #}
+<form method="get" class="card" style="display:flex; gap:12px; align-items:end; flex-wrap:wrap;">
+  <div style="flex:2;">
+    <label><span>Cari</span>
+      <input class="input" name="q" value="{{ q }}" placeholder="Kode atau deskripsi...">
+    </label>
+  </div>
+  <div style="flex:1;">
+    <label><span>AFE Line</span>
+      <select name="afe_line" class="input">
+        <option value="">— Semua Line —</option>
+        {% for line in afe_lines %}
+          <option value="{{ line.pk }}" {% if current_afe_line == line.pk|stringformat:"d" %}selected{% endif %}>
+            {{ line.line_code }} — {{ line.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <div>
+    <label><span>Phase</span>
+      <select name="phase" class="input">
+        <option value="">Semua</option>
+        <option value="DHB" {% if current_phase == "DHB" %}selected{% endif %}>DHB</option>
+        <option value="CB" {% if current_phase == "CB" %}selected{% endif %}>CB</option>
+        <option value="BOTH" {% if current_phase == "BOTH" %}selected{% endif %}>Both</option>
+      </select>
+    </label>
+  </div>
+  <button class="btn btn-primary">Filter</button>
+</form>
+
+{# ---- Table ---- #}
+<div class="card">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Code</th>
+        <th>Description</th>
+        <th class="num">Unit Price (USD)</th>
+        <th>UoM</th>
+        <th>AFE Line</th>
+        <th>Phase</th>
+        <th>Material</th>
+        <th>Berlaku</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td><strong>{{ item.code }}</strong></td>
+        <td>{{ item.description }}</td>
+        <td class="num">${{ item.unit_price_usd|floatformat:2 }}</td>
+        <td>{{ item.unit_of_measure|default:"-" }}</td>
+        <td class="sub">
+          {% if item.afe_line %}{{ item.afe_line.line_code }} — {{ item.afe_line.name }}{% else %}-{% endif %}
+        </td>
+        <td>{{ item.get_phase_flag_display }}</td>
+        <td class="sub">{{ item.material_type|default:"-" }}</td>
+        <td class="sub">{{ item.effective_from|date:"d/m/Y" }}</td>
+        <td style="white-space:nowrap;">
+          <a class="btn btn-sm" href="{% url 'afe:rate_card_edit' item.pk %}">Edit</a>
+          <form method="post" action="{% url 'afe:rate_card_delete' item.pk %}" style="display:inline;"
+                onsubmit="return confirm('Hapus rate card {{ item.code }}?')">
+            {% csrf_token %}
+            <button class="btn btn-sm btn-danger">Hapus</button>
+          </form>
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="9" class="sub" style="text-align:center; padding:24px;">
+          Belum ada rate card item.
+          <a href="{% url 'afe:rate_card_create' %}">Tambah sekarang</a> atau
+          <a href="{% url 'afe:rate_card_upload' %}">upload dari Excel</a>.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

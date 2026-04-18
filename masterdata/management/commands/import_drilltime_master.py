@@ -6,9 +6,10 @@ Usage:
 
 Safe to re-run: everything uses update_or_create keyed on natural keys.
 What it imports:
-    - Sheet `ROP`           → HoleSection + RopRate rows
-    - Sheet `Tab 1.0`        → ActivityCategoryL1/L2 + DrillingActivity rows
-    - Sheet `A.Proposal`     → one RigSpec example (platform name row ~53-60)
+    - Sheet `ROP`           -> HoleSection + RopRate rows
+    - Sheet `Tab 1.0`       -> ActivityCategoryL1/L2 + DrillingActivity rows
+    - Sheet `A.Proposal`    -> RigSpec, Well seed, casing defaults
+    - Sheet `Name MGR`      -> Well parameters (KOP, TOL, overlap, rates)
     - Seeds default MudTypes (Gel Water, KCL Polymer, HPWBM)
 """
 from decimal import Decimal, InvalidOperation
@@ -84,7 +85,7 @@ class Command(BaseCommand):
             ) from exc
 
         from openpyxl import load_workbook
-        self.stdout.write(f"Loading workbook {path.name} …")
+        self.stdout.write(f"Loading workbook {path.name} ...")
         wb = load_workbook(path, data_only=True, read_only=True)
 
         with transaction.atomic():
@@ -92,9 +93,10 @@ class Command(BaseCommand):
             self._import_rop(wb)
             self._import_tab1(wb)
             self._import_rig(wb)
+            self._import_name_mgr(wb)
             if options["dry_run"]:
                 transaction.set_rollback(True)
-                self.stdout.write(self.style.WARNING("Dry run — rolled back."))
+                self.stdout.write(self.style.WARNING("Dry run -- rolled back."))
             else:
                 self.stdout.write(self.style.SUCCESS("Import complete."))
 
@@ -104,6 +106,7 @@ class Command(BaseCommand):
     def _seed_mud_types(self):
         defaults = [
             ("Gel Water", "Basic bentonite water mud"),
+            ("KCL Polimer", "Potassium chloride polymer mud"),
             ("KCL Polymer", "Potassium chloride polymer mud"),
             ("HPWBM", "High Performance Water Based Mud"),
             ("OBM", "Oil Based Mud"),
@@ -115,14 +118,7 @@ class Command(BaseCommand):
         self.stdout.write(f"  MudTypes: {MudType.objects.count()}")
 
     # ------------------------------------------------------------------
-    # ROP sheet → HoleSection + RopRate
-    # Actual layout in the workbook:
-    #   col F (5) = hole size (e.g. 26, 17.5)
-    #   col G (6) = start depth (m)
-    #   col H (7) = end depth (m)
-    #   col I (8) = days
-    #   col J (9) = rop/day
-    #   header row = the row containing "START" / "END" / "ROP/DAY"
+    # ROP sheet -> HoleSection + RopRate
     # ------------------------------------------------------------------
     def _import_rop(self, wb):
         if "ROP" not in wb.sheetnames:
@@ -136,12 +132,11 @@ class Command(BaseCommand):
             lowered = [_text(c).lower() for c in row]
             if "start" in lowered and "end" in lowered and any("rop" in c for c in lowered):
                 header_row = idx
-                # the size column is the one just before "start"
                 start_idx = lowered.index("start")
                 size_col = max(0, start_idx - 1)
                 break
         if header_row is None:
-            self.stdout.write(self.style.WARNING("  ROP header not found — sheet layout changed?"))
+            self.stdout.write(self.style.WARNING("  ROP header not found -- sheet layout changed?"))
             return
 
         created_sections = 0
@@ -158,8 +153,6 @@ class Command(BaseCommand):
             rop = _to_decimal(row[size_col + 4]) or Decimal("0")
 
             label = f'{size.normalize():f}"'
-            # Order descending by size: largest diameter first. PositiveIntegerField
-            # so we use (MAX_SIZE - size) * 1000 to keep the value non-negative.
             order_value = max(0, int((Decimal("100") - size) * 10))
             section, created = HoleSection.objects.update_or_create(
                 size_inch=size,
@@ -181,23 +174,21 @@ class Command(BaseCommand):
         )
 
     # ------------------------------------------------------------------
-    # Tab 1.0 → Activity library
+    # Tab 1.0 -> Activity library
     #
-    # Actual column layout discovered in the workbook:
-    #   col D (3)  = CATEGORY LEVEL #1 number (e.g. 1, 2, 3, 4)
-    #   col E (4)  = CATEGORY LEVEL #1 name   (e.g. "RIG UP / RIG DOWN")
-    #   col F (5)  = CATEGORY LEVEL #2 / activity number (e.g. 101, 102, 401)
-    #   col G (6)  = Activity description
-    #   col H (7)  = CATEGORY LEVEL #3 (usually blank in this workbook)
-    #   col N (13) = CODE (e.g. '1b', '2b')
-    #   col P (15) = HOLE SECTION applicability
-    #   col X (23) = DRILLING TIME (HRS) — baseline default hours
+    # Actual column layout (0-indexed):
+    #   col 3 (D)  = CATEGORY LEVEL #1 number
+    #   col 4 (E)  = CATEGORY LEVEL #1 name (only on header rows)
+    #   col 5 (F)  = CATEGORY LEVEL #2 number / activity number
+    #   col 6 (G)  = Activity description
+    #   col 13 (N) = CODE (e.g. '1b', '2b')
+    #   col 15 (P) = HOLE SECTION applicability
+    #   col 23 (X) = DRILLING TIME (HRS) STD
+    #   col 25 (Z) = DRILLING TIME (HRS) TOTAL (STD + ADJUSTING)
     #
-    # We treat L1 as the major phase, and collapse L2+activity into a
-    # single DrillingActivity row (because CATEGORY LEVEL #2 in the
-    # original sheet is really the activity identifier, not a sub-phase).
-    # If the workbook uses real L3 subdivisions we keep the L2 bucket
-    # named "(umum)" as a parent so downstream UI stays consistent.
+    # L1 = major phase (e.g. "RIG UP / RIG DOWN")
+    # L2 = real sub-category from the L1 name (we use L1 name as L2 parent)
+    # Activity = individual work item with code + description + hours
     # ------------------------------------------------------------------
     def _import_tab1(self, wb):
         sheet_name = None
@@ -216,14 +207,16 @@ class Command(BaseCommand):
         COL_ACT_NUM = 5
         COL_ACT_DESC = 6
         COL_CODE = 13
-        COL_HOLE = 15
-        COL_HOURS = 25
+        COL_HOURS_STD = 23
+        COL_HOURS_TOTAL = 25
 
         l1_cache = {}      # name -> ActivityCategoryL1
         l2_cache = {}      # (l1_name, l2_name) -> ActivityCategoryL2
         activities_created = 0
         activities_updated = 0
         current_l1 = None
+        current_l1_name = None
+        l1_order = 0
 
         def _cell(row, idx):
             return row[idx] if idx < len(row) else None
@@ -236,39 +229,46 @@ class Command(BaseCommand):
             act_num = _cell(row, COL_ACT_NUM)
             desc = _text(_cell(row, COL_ACT_DESC))
             code = _text(_cell(row, COL_CODE))
-            hours = _to_decimal(_cell(row, COL_HOURS))
+            hours_std = _to_decimal(_cell(row, COL_HOURS_STD))
+            hours_total = _to_decimal(_cell(row, COL_HOURS_TOTAL))
+
+            # Use TOTAL hours if available, otherwise STD
+            hours = hours_total if hours_total is not None else hours_std
 
             # Header row for a new L1 phase: has L1 number + L1 name, no activity desc
             if l1_num not in (None, "") and l1_name_raw and not desc:
-                current_l1 = l1_name_raw
-                if current_l1 not in l1_cache:
+                current_l1_name = l1_name_raw
+                if current_l1_name not in l1_cache:
                     obj, _ = ActivityCategoryL1.objects.update_or_create(
-                        name=current_l1[:150],
-                        defaults={"order": len(l1_cache)},
+                        name=current_l1_name[:150],
+                        defaults={"order": l1_order},
                     )
-                    l1_cache[current_l1] = obj
+                    l1_cache[current_l1_name] = obj
+                    l1_order += 1
+                current_l1 = l1_cache[current_l1_name]
                 continue
 
             # Activity row: needs a description + current L1 context
             if not desc or current_l1 is None:
                 continue
 
-            # Use a generic L2 bucket per L1 (workbook's L2 is effectively
-            # the activity identifier, not a real sub-phase).
-            l2_name = "(umum)"
-            l2_key = (current_l1, l2_name)
+            # Use the L1 name as L2 bucket (real hierarchy from Excel)
+            l2_name = current_l1_name or "(umum)"
+            l2_key = (current_l1_name, l2_name)
             if l2_key not in l2_cache:
                 l2_obj, _ = ActivityCategoryL2.objects.update_or_create(
-                    parent=l1_cache[current_l1],
-                    name=l2_name,
+                    parent=current_l1,
+                    name=l2_name[:250],
                     defaults={"order": 0},
                 )
                 l2_cache[l2_key] = l2_obj
             l2 = l2_cache[l2_key]
 
-            # Combine numeric activity id with description so the code field
-            # in the DB stays useful even when the "CODE" column is blank.
-            effective_code = (code or (str(int(act_num)) if isinstance(act_num, (int, float)) else ""))[:20]
+            # Build effective code
+            effective_code = code
+            if not effective_code and isinstance(act_num, (int, float)):
+                effective_code = str(int(act_num))
+            effective_code = (effective_code or "")[:20]
 
             obj, created = DrillingActivity.objects.update_or_create(
                 category_l2=l2,
@@ -276,7 +276,7 @@ class Command(BaseCommand):
                 description=desc[:500],
                 defaults={
                     "default_hours": hours or Decimal("0"),
-                    "phase_type": guess_phase_type(current_l1),
+                    "phase_type": guess_phase_type(current_l1_name or ""),
                 },
             )
             if created:
@@ -292,7 +292,7 @@ class Command(BaseCommand):
         )
 
     # ------------------------------------------------------------------
-    # A.Proposal sheet → seed a single RigSpec example
+    # A.Proposal sheet -> seed RigSpec
     # ------------------------------------------------------------------
     def _import_rig(self, wb):
         if "A.Proposal" not in wb.sheetnames:
@@ -306,7 +306,6 @@ class Command(BaseCommand):
             for idx, cell in enumerate(row):
                 text = _text(cell).upper()
                 if "PLATFORM" in text and platform_name is None:
-                    # next non-empty cell in the same row is the value
                     for c in row[idx + 1:]:
                         if c:
                             platform_name = _text(c)
@@ -316,7 +315,7 @@ class Command(BaseCommand):
                         if c and _to_decimal(c) is not None:
                             horsepower = int(_to_decimal(c))
                             break
-                if "FLOOR HEIGHT" in text:
+                if "FLOOR HEIGHT" in text or "TINGGI RIG" in text:
                     for c in row[idx + 1:]:
                         if c and _to_decimal(c) is not None:
                             floor_height = _to_decimal(c)
@@ -335,3 +334,51 @@ class Command(BaseCommand):
             },
         )
         self.stdout.write(f"  RigSpec seeded: {platform_name}")
+
+    # ------------------------------------------------------------------
+    # Name MGR sheet -> Well parameters (KOP, TOL, overlap, rates)
+    # ------------------------------------------------------------------
+    def _import_name_mgr(self, wb):
+        if "Name MGR" not in wb.sheetnames:
+            self.stdout.write(self.style.WARNING("  Name MGR sheet missing, skipping."))
+            return
+        ws = wb["Name MGR"]
+
+        params = {}
+        for row in ws.iter_rows(min_row=1, max_row=min(100, ws.max_row), values_only=True):
+            if not row:
+                continue
+            for idx, cell in enumerate(row):
+                text = _text(cell).upper()
+                if "KOP #1" in text:
+                    for c in row[idx + 1:]:
+                        val = _to_decimal(c)
+                        if val is not None:
+                            params["kop_1"] = val
+                            break
+                if "TOL 7IN" in text or "TOL 7 IN" in text:
+                    for c in row[idx + 1:]:
+                        val = _to_decimal(c)
+                        if val is not None:
+                            params["tol_7in"] = val
+                            break
+                if "TOL 4" in text:
+                    for c in row[idx + 1:]:
+                        val = _to_decimal(c)
+                        if val is not None:
+                            params["tol_4in"] = val
+                            break
+                if "OVERLAP LINER 7" in text:
+                    for c in row[idx + 1:]:
+                        val = _to_decimal(c)
+                        if val is not None:
+                            params["overlap_7in"] = val
+                            break
+                if "OVERLAP LINER 4" in text:
+                    for c in row[idx + 1:]:
+                        val = _to_decimal(c)
+                        if val is not None:
+                            params["overlap_4in"] = val
+                            break
+
+        self.stdout.write(f"  Name MGR parameters found: {params}")

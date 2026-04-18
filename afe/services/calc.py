@@ -4,10 +4,11 @@ AFE calculation engine.
 Replicates the F.CONT SUMIFS roll-ups and the formulas that feed the 58
 static AFE lines from sheet `AFE_v.2017_Kontrak JTB_Update April 2026.xlsx`.
 
-We do NOT mirror E.COMP row-by-row. Instead, for every line we apply
-one of a small number of `calc_method`s and multiply a proposal-level
-driver (rig days, DHB days, max depth, etc.) by a unit price from
-`RateCardItem`. Engineers can override the result per line.
+Flow: DrillTime Proposal -> AFE
+  1. Proposal provides "drivers": rig_days, dhb_days, cb_days, max_depth, casing weight
+  2. Each AFETemplate line uses a calc_method to compute cost from drivers + rate card
+  3. AFELineComponent records store the detail breakdown (from E.COMP)
+  4. Totals are rolled up into tangible/intangible/grand total
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from ..models import (
     AFE,
     AFECategory,
     AFELine,
+    AFELineComponent,
     AFETemplate,
     CalcMethod,
     PhaseFlag,
@@ -34,24 +36,28 @@ METERS_TO_FEET = Decimal("3.2808")
 
 
 # ---------------------------------------------------------------------------
-# Proposal drivers — the numeric inputs that feed every calculation
+# Proposal drivers -- the numeric inputs from DrillTime that feed AFE calcs
 # ---------------------------------------------------------------------------
 @dataclass
 class ProposalDrivers:
     rig_days: Decimal
     dhb_days: Decimal
     cb_days: Decimal
+    mob_days: Decimal
     max_depth_m: Decimal
     total_casing_weight_lbs: Decimal
+    exchange_rate: Decimal
 
     @classmethod
     def from_proposal(cls, proposal: Proposal) -> "ProposalDrivers":
         sections = list(CasingSection.objects
                         .filter(proposal=proposal)
                         .order_by("order"))
+        # These come directly from DrillTime calculation (SUM-based)
         rig_days = proposal.total_rig_days or Decimal("0")
         dhb_days = proposal.total_dryhole_days or Decimal("0")
         cb_days = proposal.total_completion_days or Decimal("0")
+        mob_days = (proposal.mob_days or Decimal("0")) + (proposal.demob_days or Decimal("0"))
         max_depth = max((s.depth_m or Decimal("0") for s in sections),
                         default=Decimal("0"))
 
@@ -69,8 +75,10 @@ class ProposalDrivers:
             rig_days=Decimal(rig_days),
             dhb_days=Decimal(dhb_days),
             cb_days=Decimal(cb_days),
+            mob_days=Decimal(mob_days),
             max_depth_m=Decimal(max_depth),
             total_casing_weight_lbs=total_weight.quantize(Q2, rounding=ROUND_HALF_UP),
+            exchange_rate=proposal.dollar_rate or Decimal("16500"),
         )
 
 
@@ -78,14 +86,17 @@ class ProposalDrivers:
 # Rate card lookup helpers
 # ---------------------------------------------------------------------------
 def _pick_rate(template: AFETemplate, phase: PhaseFlag | None = None) -> RateCardItem | None:
-    """Find the default RateCardItem for a template (optionally filtering by
-    DHB/CB phase). Falls back to any rate linked to the template."""
     qs = RateCardItem.objects.filter(afe_line=template)
     if phase:
         hit = qs.filter(phase_flag=phase).order_by("-unit_price_usd").first()
         if hit:
             return hit
     return qs.order_by("-unit_price_usd").first()
+
+
+def _get_all_rates(template: AFETemplate) -> list[RateCardItem]:
+    """Get all rate card items linked to this template."""
+    return list(RateCardItem.objects.filter(afe_line=template).order_by("code"))
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +121,6 @@ def _calc_line_amount(template: AFETemplate, drivers: ProposalDrivers) -> tuple[
         amount = (drivers.dhb_days * dhb_price) + (drivers.cb_days * cb_price)
         qty = drivers.dhb_days + drivers.cb_days
         chosen = dhb_rate or cb_rate or fallback
-        # unit_price stored as blended (weighted) — just use the avg of two
         blended = ((dhb_price + cb_price) / 2) if (dhb_price or cb_price) else Decimal("0")
         return amount.quantize(Q2, rounding=ROUND_HALF_UP), qty, blended.quantize(Q2), chosen
 
@@ -136,12 +146,59 @@ def _calc_line_amount(template: AFETemplate, drivers: ProposalDrivers) -> tuple[
 
 
 # ---------------------------------------------------------------------------
+# Component generation -- populate AFELineComponent from rate cards
+# ---------------------------------------------------------------------------
+def _generate_components(afe_line: AFELine, drivers: ProposalDrivers) -> None:
+    """Create AFELineComponent records from all rate card items linked to this template."""
+    # Clear existing components
+    afe_line.components.all().delete()
+
+    rates = _get_all_rates(afe_line.template)
+    if not rates:
+        return
+
+    for idx, rate in enumerate(rates):
+        qty = Decimal("1")
+        method = afe_line.template.calc_method
+
+        # Determine quantity based on calc method
+        if method == CalcMethod.RIG_DAYS_RATE:
+            qty = drivers.rig_days
+        elif method == CalcMethod.DHB_CB_SPLIT:
+            if rate.phase_flag == PhaseFlag.DHB:
+                qty = drivers.dhb_days
+            elif rate.phase_flag == PhaseFlag.CB:
+                qty = drivers.cb_days
+            else:
+                qty = drivers.rig_days
+        elif method == CalcMethod.PER_METER_DEPTH:
+            qty = drivers.max_depth_m
+
+        total = (qty * rate.unit_price_usd).quantize(Q2, rounding=ROUND_HALF_UP)
+
+        AFELineComponent.objects.create(
+            afe_line=afe_line,
+            description=rate.description[:300],
+            quantity=qty,
+            unit_of_measure=rate.unit_of_measure,
+            unit_price_usd=rate.unit_price_usd,
+            total_usd=total,
+            material_type=rate.material_type,
+            material_category="",
+            stock_status="",
+            phase_flag=rate.phase_flag,
+            order=idx,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 @transaction.atomic
 def generate_afe_from_proposal(afe: AFE, *, overwrite: bool = True) -> None:
     """Populate AFELine rows for every AFETemplate based on the proposal.
 
+    Also generates AFELineComponent detail records from rate cards.
     If `overwrite=True`, existing override_usd values are wiped.
     """
     drivers = ProposalDrivers.from_proposal(afe.proposal)
@@ -149,8 +206,6 @@ def generate_afe_from_proposal(afe: AFE, *, overwrite: bool = True) -> None:
 
     for tpl in templates:
         if tpl.is_subtotal_row:
-            # ensure a placeholder line exists so the detail view can show it,
-            # but skip computation.
             AFELine.objects.update_or_create(
                 afe=afe, template=tpl,
                 defaults={
@@ -172,7 +227,14 @@ def generate_afe_from_proposal(afe: AFE, *, overwrite: bool = True) -> None:
         }
         if overwrite:
             defaults["override_usd"] = None
-        AFELine.objects.update_or_create(afe=afe, template=tpl, defaults=defaults)
+
+        line, _ = AFELine.objects.update_or_create(
+            afe=afe, template=tpl, defaults=defaults
+        )
+
+        # Generate component detail for this line
+        if overwrite:
+            _generate_components(line, drivers)
 
     recalculate_afe(afe)
 
@@ -196,7 +258,7 @@ def recalculate_afe(afe: AFE) -> AFE:
     contingency_amount = (base * contingency_pct / Decimal("100")).quantize(Q2, rounding=ROUND_HALF_UP)
     grand_total = base + contingency_amount
 
-    # Cost per meter / day (rough KPIs)
+    # Cost per meter / day (rough KPIs from DrillTime data)
     drivers = ProposalDrivers.from_proposal(afe.proposal)
     cost_per_meter = (grand_total / drivers.max_depth_m).quantize(Q2, rounding=ROUND_HALF_UP) \
         if drivers.max_depth_m else Decimal("0")

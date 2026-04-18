@@ -103,6 +103,7 @@ input[type="password"], select, textarea {
 .status-approved { background: #dcfce7; color: #166534; }
 .status-rejected { background: #fee2e2; color: #991b1b; }
 .status-revision { background: #ffedd5; color: #9a3412; }
+.status-template { background: #f3e8ff; color: #7c3aed; }
 
 /* --- alerts --- */
 .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 10px; }

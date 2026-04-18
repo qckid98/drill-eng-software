@@ -53,6 +53,20 @@
   </div>
 </div>
 
+{# ============ DrillTime Drivers ============ #}
+<div class="card">
+  <h2>Data dari Drilling Time Proposal</h2>
+  <div class="grid grid-3">
+    <div><strong>Well:</strong><br>{{ afe.proposal.well.name }} — {{ afe.proposal.well.location }}</div>
+    <div><strong>Proposal:</strong><br><a href="{% url 'proposals:detail' afe.proposal.pk %}">{{ afe.proposal.doc_number }}</a></div>
+    <div><strong>Exchange Rate:</strong><br>Rp{{ afe.effective_exchange_rate|floatformat:0 }} / USD</div>
+    <div><strong>Dry Hole Days:</strong><br>{{ afe.proposal.total_dryhole_days }} days</div>
+    <div><strong>Completion Days:</strong><br>{{ afe.proposal.total_completion_days }} days</div>
+    <div><strong>Rig Days (total):</strong><br>{{ afe.proposal.total_rig_days }} days</div>
+    <div><strong>Mob + Demob:</strong><br>{{ afe.proposal.mob_days }} + {{ afe.proposal.demob_days }} days</div>
+  </div>
+</div>
+
 {# ============ Chart ============ #}
 <div class="card">
   <h2>Breakdown Cost per Section</h2>
@@ -94,6 +108,32 @@
         <td class="num">{% if line.override_usd is not None %}${{ line.override_usd|floatformat:2 }}{% else %}—{% endif %}</td>
         <td class="num"><strong>${{ line.final_usd|floatformat:2 }}</strong></td>
       </tr>
+      {% if line.components.count %}
+      <tr>
+        <td colspan="9" style="padding:0;">
+          <table class="table table-compact" style="margin:0; background:#fafbfd;">
+            <thead>
+              <tr><th></th><th>Component</th><th>Type</th><th class="num">Qty</th><th>UoM</th><th class="num">Unit Price</th><th class="num">Total (USD)</th><th>Phase</th><th></th></tr>
+            </thead>
+            <tbody>
+              {% for comp in line.components.all %}
+              <tr>
+                <td></td>
+                <td class="sub">{{ comp.description }}</td>
+                <td class="sub">{{ comp.material_type }}</td>
+                <td class="num">{{ comp.quantity }}</td>
+                <td class="sub">{{ comp.unit_of_measure }}</td>
+                <td class="num">${{ comp.unit_price_usd|floatformat:2 }}</td>
+                <td class="num">${{ comp.total_usd|floatformat:2 }}</td>
+                <td class="sub">{{ comp.get_phase_flag_display }}</td>
+                <td></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </td>
+      </tr>
+      {% endif %}
       {% endfor %}
     </tbody>
   </table>

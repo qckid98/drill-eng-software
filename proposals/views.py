@@ -6,33 +6,25 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
-from masterdata.models import (
-    ActivityCategoryL1,
-    ActivityCategoryL2,
-    DrillingActivity,
-    SectionTemplate,
-)
-from .services.templates import apply_template_to_section, apply_template_to_phase
+from masterdata.models import ActivityCategoryL1, ActivityCategoryL2, DrillingActivity
 
 from .forms import (
     ApprovalActionForm,
     CasingSectionFormSet,
     CompletionSpecForm,
-    CoringIntervalFormSet,
     FormationMarkerFormSet,
+    OperationalRateFormSet,
     ProposalActivityFormSet,
     ProposalGeneralForm,
-    ProposalPhaseActivityFormSet,
-    TubeLengthRangeFormSet,
-    TubingItemFormSet,
+    TubingSpecFormSet,
     WellForm,
 )
 from .models import (
     CasingSection,
     CompletionSpec,
     Proposal,
-    ProposalPhase,
     ProposalStatus,
+    TubingSpec,
 )
 from .services import approval
 from .services.calc import recalculate_proposal
@@ -45,7 +37,11 @@ from .services.calc import recalculate_proposal
 def dashboard(request):
     status = request.GET.get("status") or ""
     q = request.GET.get("q") or ""
-    qs = Proposal.objects.select_related("well", "created_by").all()
+    qs = (
+        Proposal.objects
+        .select_related("well", "created_by")
+        .exclude(status=ProposalStatus.TEMPLATE)
+    )
 
     # Engineers only see their own proposals; supervisors/management see all
     if request.user.is_engineer:
@@ -60,11 +56,17 @@ def dashboard(request):
             | Q(well__location__icontains=q)
         )
 
+    # Available templates for "new from template" button
+    templates = Proposal.objects.filter(status=ProposalStatus.TEMPLATE).select_related("well")
+
     return render(request, "proposals/dashboard.html", {
         "proposals": qs[:200],
-        "status_choices": ProposalStatus.choices,
+        "status_choices": [
+            c for c in ProposalStatus.choices if c[0] != ProposalStatus.TEMPLATE
+        ],
         "current_status": status,
         "q": q,
+        "templates": templates,
     })
 
 
@@ -112,6 +114,50 @@ def proposal_create(request):
 
 
 # ---------------------------------------------------------------------------
+# Create from template
+# ---------------------------------------------------------------------------
+@login_required
+def proposal_create_from_template(request, template_pk):
+    if not (request.user.is_engineer or request.user.is_admin_role):
+        return HttpResponseForbidden("Hanya Drilling Engineer yang dapat membuat proposal.")
+
+    template = get_object_or_404(Proposal, pk=template_pk, status=ProposalStatus.TEMPLATE)
+
+    if request.method == "POST":
+        well_form = WellForm(request.POST, prefix="well")
+        if well_form.is_valid():
+            well = well_form.save()
+            proposal = template.clone_from_template(request.user, well)
+            recalculate_proposal(proposal)
+            messages.success(
+                request,
+                f"Proposal dibuat dari template '{template.title}'. "
+                f"Silakan review dan edit sesuai kebutuhan."
+            )
+            return redirect("proposals:detail", pk=proposal.pk)
+    else:
+        # Pre-fill well form from template's well
+        well_form = WellForm(prefix="well", initial={
+            "name": "",
+            "location": "",
+            "cluster": template.well.cluster,
+            "field": template.well.field,
+            "basin": template.well.basin,
+            "operator": template.well.operator,
+            "contract_area": template.well.contract_area,
+            "target_formation": template.well.target_formation,
+            "project_type": template.well.project_type,
+            "well_type": template.well.well_type,
+            "well_category": template.well.well_category,
+        })
+
+    return render(request, "proposals/create_from_template.html", {
+        "template": template,
+        "well_form": well_form,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Detail (read-only view with chart + approval actions)
 # ---------------------------------------------------------------------------
 @login_required
@@ -125,6 +171,20 @@ def proposal_detail(request, pk):
     chart_labels = [str(s.hole_section.label) for s in sections]
     chart_drilling = [float(s.drilling_days) for s in sections]
     chart_non_drilling = [float(s.non_drilling_days) for s in sections]
+    chart_completion = [float(s.completion_days) for s in sections]
+
+    # Cumulative days for drilling curve
+    cum_days = []
+    cum_depth = []
+    running_days = float(proposal.mob_days or 0)
+    running_depth = 0
+    for s in sections:
+        cum_days.append(round(running_days, 2))
+        cum_depth.append(round(float(s.previous_depth), 2))
+        running_days += float(s.total_days)
+        running_depth = float(s.depth_m)
+        cum_days.append(round(running_days, 2))
+        cum_depth.append(round(running_depth, 2))
 
     return render(request, "proposals/detail.html", {
         "proposal": proposal,
@@ -132,17 +192,23 @@ def proposal_detail(request, pk):
         "chart_labels": chart_labels,
         "chart_drilling": chart_drilling,
         "chart_non_drilling": chart_non_drilling,
+        "chart_completion": chart_completion,
+        "cum_days": cum_days,
+        "cum_depth": cum_depth,
         "approval_form": ApprovalActionForm(),
         "approval_logs": proposal.approval_logs.select_related("actor").all(),
         "can_edit": proposal.can_edit(request.user),
         "can_submit": proposal.can_submit(request.user),
         "can_review": proposal.can_review(request.user),
         "can_approve": proposal.can_approve(request.user),
+        "tubing_specs": proposal.tubing_specs.all(),
+        "operational_rates": proposal.operational_rates.all(),
+        "formation_markers": proposal.well.formation_markers.all(),
     })
 
 
 # ---------------------------------------------------------------------------
-# Edit — general / casing / tubing / completion
+# Edit -- general / casing / tubing / completion / rates / markers
 # ---------------------------------------------------------------------------
 def _require_edit(user, proposal):
     if not proposal.can_edit(user):
@@ -208,25 +274,16 @@ def proposal_edit_tubing(request, pk):
         return HttpResponseForbidden(str(exc))
 
     if request.method == "POST":
-        tubing_fs = TubingItemFormSet(request.POST, instance=proposal, prefix="tubing")
-        marker_fs = FormationMarkerFormSet(request.POST, instance=proposal, prefix="marker")
-        range_fs = TubeLengthRangeFormSet(request.POST, instance=proposal, prefix="range")
-        if tubing_fs.is_valid() and marker_fs.is_valid() and range_fs.is_valid():
-            tubing_fs.save()
-            marker_fs.save()
-            range_fs.save()
+        formset = TubingSpecFormSet(request.POST, instance=proposal)
+        if formset.is_valid():
+            formset.save()
             messages.success(request, "Tubing spec disimpan.")
             return redirect("proposals:detail", pk=pk)
     else:
-        tubing_fs = TubingItemFormSet(instance=proposal, prefix="tubing")
-        marker_fs = FormationMarkerFormSet(instance=proposal, prefix="marker")
-        range_fs = TubeLengthRangeFormSet(instance=proposal, prefix="range")
+        formset = TubingSpecFormSet(instance=proposal)
 
-    return render(request, "proposals/edit_tubing.html", {
-        "proposal": proposal,
-        "tubing_formset": tubing_fs,
-        "marker_formset": marker_fs,
-        "range_formset": range_fs,
+    return render(request, "proposals/edit_simple.html", {
+        "proposal": proposal, "formset": formset, "section_title": "Tubing Specification",
     })
 
 
@@ -241,20 +298,60 @@ def proposal_edit_completion(request, pk):
     instance, _ = CompletionSpec.objects.get_or_create(proposal=proposal)
     if request.method == "POST":
         form = CompletionSpecForm(request.POST, instance=instance)
-        coring_fs = CoringIntervalFormSet(request.POST, instance=instance, prefix="coring")
-        if form.is_valid() and coring_fs.is_valid():
+        if form.is_valid():
             form.save()
-            coring_fs.save()
             messages.success(request, "Completion spec disimpan.")
             return redirect("proposals:detail", pk=pk)
     else:
         form = CompletionSpecForm(instance=instance)
-        coring_fs = CoringIntervalFormSet(instance=instance, prefix="coring")
+    return render(request, "proposals/edit_simple.html", {
+        "proposal": proposal, "form": form, "section_title": "Completion Specification",
+    })
 
-    return render(request, "proposals/edit_completion.html", {
-        "proposal": proposal,
-        "form": form,
-        "coring_formset": coring_fs,
+
+@login_required
+def proposal_edit_rates(request, pk):
+    proposal = get_object_or_404(Proposal, pk=pk)
+    try:
+        _require_edit(request.user, proposal)
+    except PermissionError as exc:
+        return HttpResponseForbidden(str(exc))
+
+    if request.method == "POST":
+        formset = OperationalRateFormSet(request.POST, instance=proposal)
+        if formset.is_valid():
+            formset.save()
+            messages.success(request, "Operational rates disimpan.")
+            return redirect("proposals:detail", pk=pk)
+    else:
+        formset = OperationalRateFormSet(instance=proposal)
+
+    return render(request, "proposals/edit_simple.html", {
+        "proposal": proposal, "formset": formset,
+        "section_title": "Operational Rates",
+    })
+
+
+@login_required
+def proposal_edit_markers(request, pk):
+    proposal = get_object_or_404(Proposal, pk=pk)
+    try:
+        _require_edit(request.user, proposal)
+    except PermissionError as exc:
+        return HttpResponseForbidden(str(exc))
+
+    if request.method == "POST":
+        formset = FormationMarkerFormSet(request.POST, instance=proposal.well)
+        if formset.is_valid():
+            formset.save()
+            messages.success(request, "Formation markers disimpan.")
+            return redirect("proposals:detail", pk=pk)
+    else:
+        formset = FormationMarkerFormSet(instance=proposal.well)
+
+    return render(request, "proposals/edit_simple.html", {
+        "proposal": proposal, "formset": formset,
+        "section_title": "Formation Markers",
     })
 
 
@@ -280,96 +377,9 @@ def casing_activities(request, pk, section_id):
     else:
         formset = ProposalActivityFormSet(instance=section)
 
-    templates = SectionTemplate.objects.filter(
-        hole_section=section.hole_section
-    ).order_by("order")
-
     return render(request, "proposals/edit_activities.html", {
         "proposal": proposal,
         "section": section,
-        "formset": formset,
-        "category_l1": ActivityCategoryL1.objects.all(),
-        "templates": templates,
-    })
-
-
-@login_required
-@require_http_methods(["POST"])
-def apply_section_template(request, pk, section_id):
-    proposal = get_object_or_404(Proposal, pk=pk)
-    section = get_object_or_404(CasingSection, pk=section_id, proposal=proposal)
-    try:
-        _require_edit(request.user, proposal)
-    except PermissionError as exc:
-        return HttpResponseForbidden(str(exc))
-
-    template = get_object_or_404(SectionTemplate, pk=request.POST.get("template_id"))
-    replace = "replace" in request.POST
-    apply_template_to_section(section, template, replace=replace)
-    messages.success(request, f"Template '{template.name}' diterapkan ke section {section.hole_section}.")
-    return redirect("proposals:casing_activities", pk=pk, section_id=section_id)
-
-
-@login_required
-@require_http_methods(["POST"])
-def apply_phase_template(request, pk, phase):
-    proposal = get_object_or_404(Proposal, pk=pk)
-    try:
-        _require_edit(request.user, proposal)
-    except PermissionError as exc:
-        return HttpResponseForbidden(str(exc))
-
-    from .models import ProposalPhase
-    if phase not in ProposalPhase.values:
-        return HttpResponseForbidden(f"Phase tidak dikenal: {phase}")
-
-    template = get_object_or_404(SectionTemplate, pk=request.POST.get("template_id"))
-    replace = "replace" in request.POST
-    apply_template_to_phase(proposal, phase, template, replace=replace)
-    messages.success(request, f"Template '{template.name}' diterapkan ke fase {phase}.")
-    return redirect("proposals:phase_activities", pk=pk, phase=phase)
-
-
-# ---------------------------------------------------------------------------
-# Pre Spud / Rig Release phase activities (proposal-level, not section-level)
-# ---------------------------------------------------------------------------
-@login_required
-def phase_activities(request, pk, phase):
-    proposal = get_object_or_404(Proposal, pk=pk)
-    try:
-        _require_edit(request.user, proposal)
-    except PermissionError as exc:
-        return HttpResponseForbidden(str(exc))
-
-    if phase not in ProposalPhase.values:
-        return HttpResponseForbidden(f"Phase tidak dikenal: {phase}")
-
-    # Filter formset queryset by phase so we only show activities for this phase.
-    queryset = proposal.phase_activities.filter(phase=phase)
-
-    if request.method == "POST":
-        formset = ProposalPhaseActivityFormSet(
-            request.POST, instance=proposal, queryset=queryset
-        )
-        if formset.is_valid():
-            instances = formset.save(commit=False)
-            for obj in instances:
-                obj.phase = phase
-                obj.save()
-            for obj in formset.deleted_objects:
-                obj.delete()
-            recalculate_proposal(proposal)
-            messages.success(
-                request, f"Aktivitas {dict(ProposalPhase.choices)[phase]} disimpan."
-            )
-            return redirect("proposals:phase_activities", pk=pk, phase=phase)
-    else:
-        formset = ProposalPhaseActivityFormSet(instance=proposal, queryset=queryset)
-
-    return render(request, "proposals/edit_phase_activities.html", {
-        "proposal": proposal,
-        "phase": phase,
-        "phase_label": dict(ProposalPhase.choices)[phase],
         "formset": formset,
         "category_l1": ActivityCategoryL1.objects.all(),
     })

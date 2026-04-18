@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AFE, AFEApprovalLog, AFELine, AFETemplate, RateCardItem, RateCardImportLog
+from .models import AFE, AFEApprovalLog, AFELine, AFELineComponent, AFETemplate, RateCardItem, RateCardImportLog
 
 
 @admin.register(AFETemplate)
@@ -19,11 +19,20 @@ class RateCardItemAdmin(admin.ModelAdmin):
     autocomplete_fields = ("afe_line",)
 
 
+class AFELineComponentInline(admin.TabularInline):
+    model = AFELineComponent
+    extra = 0
+    fields = ("description", "quantity", "unit_of_measure", "unit_price_usd", "total_usd",
+              "material_type", "material_category", "phase_flag")
+    readonly_fields = ("total_usd",)
+
+
 class AFELineInline(admin.TabularInline):
     model = AFELine
     extra = 0
     readonly_fields = ("template", "calculated_usd", "unit_price_usd", "quantity")
     fields = ("template", "quantity", "unit_price_usd", "calculated_usd", "override_usd", "notes")
+    show_change_link = True
 
 
 @admin.register(AFE)
@@ -36,6 +45,13 @@ class AFEAdmin(admin.ModelAdmin):
     readonly_fields = ("doc_number", "total_tangible_usd", "total_intangible_usd",
                        "contingency_amount_usd", "grand_total_usd",
                        "cost_per_meter_usd", "cost_per_day_usd")
+
+
+@admin.register(AFELine)
+class AFELineAdmin(admin.ModelAdmin):
+    list_display = ("afe", "template", "quantity", "unit_price_usd", "calculated_usd", "override_usd")
+    list_filter = ("template__section", "template__category")
+    inlines = [AFELineComponentInline]
 
 
 @admin.register(AFEApprovalLog)

@@ -2,8 +2,18 @@
 {% block title %}AFE Dashboard{% endblock %}
 {% block content %}
 
-<h1 class="page-title">Authorization For Expenditure (AFE)</h1>
-<p class="sub">Dokumen AFE dibuat dari Drilling Proposal yang sudah disetujui.</p>
+<div style="display:flex; justify-content:space-between; align-items:center;">
+  <div>
+    <h1 class="page-title">Authorization For Expenditure (AFE)</h1>
+    <p class="sub">Dokumen AFE dibuat dari Drilling Proposal yang sudah disetujui.</p>
+  </div>
+  {% if can_manage_rates %}
+  <div style="display:flex; gap:8px;">
+    <a href="{% url 'afe:rate_card_list' %}" class="btn">Daftar Harga ({{ rate_card_count }} items)</a>
+    <a href="{% url 'afe:rate_card_upload' %}" class="btn">Upload Rate Card</a>
+  </div>
+  {% endif %}
+</div>
 
 <form method="get" class="filter-bar" style="margin-top:16px;">
   <input type="text" name="q" value="{{ q }}" placeholder="Cari doc number / well / title" class="input">

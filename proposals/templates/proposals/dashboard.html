@@ -3,10 +3,17 @@
 {% block content %}
 <h1 class="page-title">Dashboard Proposal</h1>
 
+<div style="display:flex; gap:12px; margin-bottom:16px;">
+  <a href="{% url 'proposals:create' %}" class="btn btn-primary">+ Proposal Baru</a>
+  {% for t in templates %}
+    <a href="{% url 'proposals:create_from_template' t.pk %}" class="btn">+ Dari Template: {{ t.title }}</a>
+  {% endfor %}
+</div>
+
 <form method="get" class="card" style="display:flex; gap:12px; align-items:end;">
   <div style="flex:2;">
     <label><span>Cari</span>
-      <input class="input" name="q" value="{{ q }}" placeholder="Nomor dokumen, nama well, lokasi…">
+      <input class="input" name="q" value="{{ q }}" placeholder="Nomor dokumen, nama well, lokasi...">
     </label>
   </div>
   <div style="flex:1;">

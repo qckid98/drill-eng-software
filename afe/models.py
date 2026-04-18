@@ -269,6 +269,53 @@ class AFELine(models.Model):
         return self.calculated_usd or Decimal("0")
 
 
+class AFELineComponent(models.Model):
+    """Detail component under an AFE line — maps to E.COMP rows in the Excel.
+
+    Example: AFE line "CASING" (line_code=2) has components:
+      - 30" CSG STOVE, 6 MTR, 12 MM  qty=9  price=$2200
+      - 20" CSG ERW, K-55, 94#, BTC  qty=53 price=$6114
+      - etc.
+    """
+
+    afe_line = models.ForeignKey(
+        AFELine, on_delete=models.CASCADE, related_name="components"
+    )
+    description = models.CharField(max_length=300)
+    quantity = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    unit_of_measure = models.CharField(max_length=30, blank=True)
+    unit_price_usd = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total_usd = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    material_type = models.CharField(
+        max_length=30, blank=True,
+        help_text="MATERIAL or NON MATERIAL",
+    )
+    material_category = models.CharField(
+        max_length=60, blank=True,
+        help_text="SKK MIGAS category, e.g. Drive pipe, Conductor casing",
+    )
+    stock_status = models.CharField(
+        max_length=20, blank=True,
+        help_text="STOCK or NEW",
+    )
+    phase_flag = models.CharField(
+        max_length=5, choices=PhaseFlag.choices, default=PhaseFlag.BOTH,
+        help_text="DHB, CB, or BOTH",
+    )
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["afe_line_id", "order"]
+
+    def __str__(self) -> str:
+        return f"{self.description[:50]} (qty={self.quantity})"
+
+    def save(self, *args, **kwargs):
+        # Auto-calculate total
+        self.total_usd = (self.quantity or Decimal("0")) * (self.unit_price_usd or Decimal("0"))
+        super().save(*args, **kwargs)
+
+
 class AFEApprovalLog(models.Model):
     afe = models.ForeignKey(AFE, on_delete=models.CASCADE,
                              related_name="approval_logs")
