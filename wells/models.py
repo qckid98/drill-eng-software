@@ -52,19 +52,11 @@ class Well(models.Model):
     kop_m = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     overlap_liner_7in_m = models.DecimalField(
         "Overlap Liner 7\"", max_digits=8, decimal_places=2, null=True, blank=True,
-        help_text="Overlap liner 7 inch (mMD) — from A.Proposal row 24",
+        help_text="Auto-calculated: depth casing sebelumnya − TOL liner 7\"",
     )
     overlap_liner_4in_m = models.DecimalField(
         "Overlap Liner 4.5\"", max_digits=8, decimal_places=2, null=True, blank=True,
-        help_text="Overlap liner 4.5 inch (mMD) — from A.Proposal row 25",
-    )
-
-    # Liner overlap (Excel A.Proposal R20-R21) — used when there are 7" / 4-1/2" liners.
-    overlap_liner_7_m = models.DecimalField(
-        "Overlap 7\" liner (m)", max_digits=8, decimal_places=2, null=True, blank=True,
-    )
-    overlap_liner_4_5_m = models.DecimalField(
-        "Overlap 4-1/2\" liner (m)", max_digits=8, decimal_places=2, null=True, blank=True,
+        help_text="Auto-calculated: depth casing sebelumnya − TOL liner 4-1/2\"",
     )
 
     created_at = models.DateTimeField(auto_now_add=True)

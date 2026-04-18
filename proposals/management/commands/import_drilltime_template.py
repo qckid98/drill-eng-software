@@ -30,11 +30,13 @@ from masterdata.models import (
 from proposals.models import (
     CasingSection,
     CompletionSpec,
+    FormationMarker as ProposalFormationMarker,
     OperationalRate,
     Proposal,
     ProposalActivity,
     ProposalStatus,
-    TubingSpec,
+    TubeLengthRange,
+    TubingItem,
 )
 from proposals.services.calc import recalculate_proposal
 from wells.models import FormationMarker, Well
@@ -103,10 +105,12 @@ class Command(BaseCommand):
             self._import_tab2_activities(proposal)
             self._import_tubing(proposal)
             self._import_operational_rates(proposal)
-            self._import_formation_markers(well)
+            self._import_formation_markers(well, proposal)
+            self._import_tube_length_ranges(proposal)
+            self._import_rig_spec(proposal)
             self._import_completion_spec(proposal)
 
-            # Recalculate totals
+            # Recalculate totals (also triggers overlap liner calc)
             recalculate_proposal(proposal)
 
             if options["dry_run"]:
@@ -200,6 +204,7 @@ class Command(BaseCommand):
             status=ProposalStatus.TEMPLATE,
             mob_days=_to_decimal(_val(74, 5)) or Decimal("0"),
             demob_days=_to_decimal(_val(75, 5)) or Decimal("0"),
+            dollar_rate=_to_decimal(_val(60, 5)),  # row 60 col F = KURS DOLLAR
         )
         # Set spud date if available
         spud = _val(68, 5)
@@ -266,6 +271,7 @@ class Command(BaseCommand):
                 id_csg=_to_decimal(_v(8)),          # col I = ID CSG
                 weight_lbs_ft=_to_decimal(_v(7)),   # col H = WEIGHT
                 depth_m=depth,
+                top_of_liner_m=_to_decimal(_v(10)), # col K = TOL (mMD)
                 mud_type=mud_type,
                 is_completion=is_completion,
                 sg_from=_to_decimal(_v(13)),         # col N = SG FR
@@ -415,7 +421,7 @@ class Command(BaseCommand):
         self.stdout.write(f"  ProposalActivities created: {activity_count}")
 
     # ------------------------------------------------------------------
-    # A.Proposal rows 49-51 -> TubingSpec
+    # A.Proposal rows 49-51 -> TubingItem
     # ------------------------------------------------------------------
     def _import_tubing(self, proposal):
         ws = self.wb["A.Proposal"]
@@ -432,17 +438,17 @@ class Command(BaseCommand):
             if od is None:
                 continue
 
-            TubingSpec.objects.create(
+            TubingItem.objects.create(
                 proposal=proposal,
                 order=count,
                 od_inch=od,
                 id_inch=_to_decimal(_v(6)),
-                weight=_to_decimal(_v(7)),
-                avg_length=_to_decimal(_v(8)),
+                weight_lbs_ft=_to_decimal(_v(7)),
+                avg_length_m=_to_decimal(_v(8)),
                 depth_md=_to_decimal(_v(9)),
             )
             count += 1
-        self.stdout.write(f"  TubingSpecs created: {count}")
+        self.stdout.write(f"  TubingItems created: {count}")
 
     # ------------------------------------------------------------------
     # A.Proposal rows 46-50 -> OperationalRate
@@ -484,9 +490,9 @@ class Command(BaseCommand):
         self.stdout.write(f"  OperationalRates created: {count}")
 
     # ------------------------------------------------------------------
-    # A.Proposal rows 46-48 -> FormationMarker
+    # A.Proposal rows 46-52 col L-M -> FormationMarker (Well + Proposal)
     # ------------------------------------------------------------------
-    def _import_formation_markers(self, well):
+    def _import_formation_markers(self, well, proposal):
         ws = self.wb["A.Proposal"]
         count = 0
         for r in range(46, 53):
@@ -503,16 +509,92 @@ class Command(BaseCommand):
             if not name or depth is None:
                 continue
 
+            # Well-level formation marker
             FormationMarker.objects.update_or_create(
                 well=well,
                 name=name[:120],
                 defaults={"depth_m": depth, "order": count},
             )
+            # Proposal-level formation marker
+            ProposalFormationMarker.objects.create(
+                proposal=proposal,
+                name=name[:120],
+                depth_md=depth,
+                order=count,
+            )
             count += 1
         self.stdout.write(f"  FormationMarkers created: {count}")
 
     # ------------------------------------------------------------------
+    # A.Proposal rows 46-49 col P-R -> TubeLengthRange
+    # ------------------------------------------------------------------
+    def _import_tube_length_ranges(self, proposal):
+        ws = self.wb["A.Proposal"]
+        count = 0
+        for r in range(46, 50):  # rows 46-49: R-1, R-2, R-3, SP
+            row_data = []
+            for cell_row in ws.iter_rows(min_row=r, max_row=r, values_only=True):
+                row_data = list(cell_row)
+
+            def _v(idx):
+                return row_data[idx] if idx < len(row_data) else None
+
+            label = _text(_v(15))          # col P = label (R-1, R-2, R-3, SP)
+            avg_length = _to_decimal(_v(16))  # col Q = avg length (m)
+
+            if not label or avg_length is None:
+                continue
+
+            TubeLengthRange.objects.create(
+                proposal=proposal,
+                label=label[:10],
+                avg_length_m=avg_length,
+            )
+            count += 1
+        self.stdout.write(f"  TubeLengthRanges created: {count}")
+
+    # ------------------------------------------------------------------
+    # A.Proposal rows 54-59 -> RigSpec (link to Proposal)
+    # ------------------------------------------------------------------
+    def _import_rig_spec(self, proposal):
+        ws = self.wb["A.Proposal"]
+        rows = {}
+        for r in range(53, 61):
+            row_data = []
+            for cell_row in ws.iter_rows(min_row=r, max_row=r, values_only=True):
+                row_data = list(cell_row)
+            rows[r] = row_data
+
+        def _val(row_num, col_idx):
+            r = rows.get(row_num, [])
+            return r[col_idx] if col_idx < len(r) else None
+
+        platform_name = _text(_val(54, 5))  # row 54 col F = PLATFORM
+        if not platform_name:
+            self.stdout.write("  RigSpec: no platform name, skipping.")
+            return
+
+        from masterdata.models import RigSpec
+        rig, created = RigSpec.objects.update_or_create(
+            platform_name=platform_name[:100],
+            defaults={
+                "floor_height_m": _to_decimal(_val(55, 5)),  # row 55 = TINGGI RIG FLOOR
+                "horsepower": int(_to_decimal(_val(56, 5)) or 0) or None,  # row 56 = HP
+                "status": _text(_val(57, 5)),                 # row 57 = STATUS RIG
+                "capacity": _text(_val(59, 5)),               # row 59 = KAPASITAS RIG
+            },
+        )
+        # Link rig to proposal
+        proposal.rig = rig
+        proposal.save(update_fields=["rig"])
+        self.stdout.write(f"  RigSpec: {rig.platform_name} ({'created' if created else 'updated'})")
+
+    # ------------------------------------------------------------------
     # A.Proposal rows 62-65 -> CompletionSpec
+    # Row 62: Jenis Garam (col I=8) = CaCl2
+    # Row 63: SG CF (col I=8) = 1.2
+    # Row 64: Yield per SG (col I=8) = 101.8
+    # Row 65: Packaging (col I=8) = 50 kg/sax
     # ------------------------------------------------------------------
     def _import_completion_spec(self, proposal):
         ws = self.wb["A.Proposal"]
@@ -530,10 +612,10 @@ class Command(BaseCommand):
         CompletionSpec.objects.update_or_create(
             proposal=proposal,
             defaults={
-                "salt_type": _text(_val(62, 8)) or "CaCl2",
-                "sg": _to_decimal(_val(63, 8)),
-                "yield_value": _to_decimal(_val(64, 8)),
-                "volume": _to_decimal(_val(65, 8)),
+                "salt_type": _text(_val(62, 8)) or "CaCl2",   # col I row 62
+                "sg": _to_decimal(_val(63, 8)),                 # col I row 63
+                "yield_value": _to_decimal(_val(64, 8)),        # col I row 64
+                "packaging_kg_per_sax": _to_decimal(_val(65, 8)),  # col I row 65
             },
         )
         self.stdout.write("  CompletionSpec created")

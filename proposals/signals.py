@@ -6,7 +6,7 @@ the caller having to remember to call the calculator manually.
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
-from .models import CasingSection, ProposalActivity, ProposalPhaseActivity
+from .models import CasingSection, ProposalActivity
 from .services.calc import recalculate_proposal, recalculate_section
 
 
@@ -15,11 +15,6 @@ def _activity_changed(sender, instance: ProposalActivity, **kwargs):
     section = instance.casing_section
     recalculate_section(section)
     recalculate_proposal(section.proposal)
-
-
-@receiver([post_save, post_delete], sender=ProposalPhaseActivity)
-def _phase_activity_changed(sender, instance: ProposalPhaseActivity, **kwargs):
-    recalculate_proposal(instance.proposal)
 
 
 @receiver([post_save, post_delete], sender=CasingSection)

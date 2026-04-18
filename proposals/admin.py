@@ -6,6 +6,7 @@ from .models import (
     CompletionSpec,
     CoringInterval,
     FormationMarker,
+    OperationalRate,
     Proposal,
     ProposalActivity,
     TubeLengthRange,
@@ -60,3 +61,10 @@ admin.site.register(TubeLengthRange)
 admin.site.register(CompletionSpec)
 admin.site.register(CoringInterval)
 admin.site.register(ApprovalLog)
+
+
+@admin.register(OperationalRate)
+class OperationalRateAdmin(admin.ModelAdmin):
+    list_display = ("proposal", "rate_name", "value", "unit", "order")
+    list_filter = ("proposal",)
+    search_fields = ("rate_name",)

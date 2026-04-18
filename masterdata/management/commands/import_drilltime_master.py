@@ -179,16 +179,23 @@ class Command(BaseCommand):
     # Actual column layout (0-indexed):
     #   col 3 (D)  = CATEGORY LEVEL #1 number
     #   col 4 (E)  = CATEGORY LEVEL #1 name (only on header rows)
-    #   col 5 (F)  = CATEGORY LEVEL #2 number / activity number
-    #   col 6 (G)  = Activity description
+    #   col 5 (F)  = CATEGORY LEVEL #2 number
+    #   col 6 (G)  = CATEGORY LEVEL #2 name (sub-category header rows)
+    #   col 7 (H)  = CATEGORY LEVEL #3 number
+    #   col 8 (I)  = Activity description (Level 3 / actual activity)
     #   col 13 (N) = CODE (e.g. '1b', '2b')
-    #   col 15 (P) = HOLE SECTION applicability
+    #   col 15 (P) = HOLE SECTION size (e.g. 36, 26, 17.5, 12.25, 8.5, 6)
     #   col 23 (X) = DRILLING TIME (HRS) STD
     #   col 25 (Z) = DRILLING TIME (HRS) TOTAL (STD + ADJUSTING)
     #
-    # L1 = major phase (e.g. "RIG UP / RIG DOWN")
-    # L2 = real sub-category from the L1 name (we use L1 name as L2 parent)
-    # Activity = individual work item with code + description + hours
+    # Structure:
+    #   L1 (col E) = major phase (e.g. "DRILLING FORMATION & CEMENT")
+    #   L2 (col G) = sub-category (e.g. "Drilling Formation from Prev Shoe to Csg Point")
+    #   Activity (col I) = individual work item with hole section + hours
+    #                      (e.g. "Drilling Formation 17 1/2" to 734 m, ROP 200 m/days")
+    #
+    # Some activities have no L3 (col I empty) -- in that case col G is the
+    # activity description itself (2-level structure).
     # ------------------------------------------------------------------
     def _import_tab1(self, wb):
         sheet_name = None
@@ -202,21 +209,28 @@ class Command(BaseCommand):
 
         ws = wb[sheet_name]
 
-        COL_L1_NUM = 3
-        COL_L1_NAME = 4
-        COL_ACT_NUM = 5
-        COL_ACT_DESC = 6
-        COL_CODE = 13
-        COL_HOURS_STD = 23
-        COL_HOURS_TOTAL = 25
+        COL_L1_NUM = 3       # D
+        COL_L1_NAME = 4      # E
+        COL_L2_NUM = 5       # F
+        COL_L2_NAME = 6      # G
+        COL_L3_NUM = 7       # H
+        COL_L3_DESC = 8      # I  (activity description)
+        COL_CODE = 13         # N
+        COL_HOLE_SECTION = 15 # P  (hole section size)
+        COL_HOURS_STD = 23    # X
+        COL_HOURS_TOTAL = 25  # Z
 
         l1_cache = {}      # name -> ActivityCategoryL1
         l2_cache = {}      # (l1_name, l2_name) -> ActivityCategoryL2
         activities_created = 0
         activities_updated = 0
+        hole_section_links = 0
         current_l1 = None
         current_l1_name = None
+        current_l2 = None
+        current_l2_name = None
         l1_order = 0
+        l2_order = 0
 
         def _cell(row, idx):
             return row[idx] if idx < len(row) else None
@@ -224,19 +238,23 @@ class Command(BaseCommand):
         for row in ws.iter_rows(min_row=4, values_only=True):
             if not row:
                 continue
+
             l1_num = _cell(row, COL_L1_NUM)
             l1_name_raw = _text(_cell(row, COL_L1_NAME))
-            act_num = _cell(row, COL_ACT_NUM)
-            desc = _text(_cell(row, COL_ACT_DESC))
+            l2_num = _cell(row, COL_L2_NUM)
+            l2_name_raw = _text(_cell(row, COL_L2_NAME))
+            l3_num = _cell(row, COL_L3_NUM)
+            l3_desc = _text(_cell(row, COL_L3_DESC))
             code = _text(_cell(row, COL_CODE))
+            hole_size = _to_decimal(_cell(row, COL_HOLE_SECTION))
             hours_std = _to_decimal(_cell(row, COL_HOURS_STD))
             hours_total = _to_decimal(_cell(row, COL_HOURS_TOTAL))
 
             # Use TOTAL hours if available, otherwise STD
             hours = hours_total if hours_total is not None else hours_std
 
-            # Header row for a new L1 phase: has L1 number + L1 name, no activity desc
-            if l1_num not in (None, "") and l1_name_raw and not desc:
+            # --- L1 header row: has L1 name in col E, no L2/L3 desc ---
+            if l1_name_raw and not l2_name_raw and not l3_desc:
                 current_l1_name = l1_name_raw
                 if current_l1_name not in l1_cache:
                     obj, _ = ActivityCategoryL1.objects.update_or_create(
@@ -246,49 +264,122 @@ class Command(BaseCommand):
                     l1_cache[current_l1_name] = obj
                     l1_order += 1
                 current_l1 = l1_cache[current_l1_name]
+                current_l2 = None
+                current_l2_name = None
+                l2_order = 0
                 continue
 
-            # Activity row: needs a description + current L1 context
-            if not desc or current_l1 is None:
+            # --- L2 header row: has L2 name in col G, no L3 desc ---
+            if l2_name_raw and not l3_desc and current_l1 is not None:
+                current_l2_name = l2_name_raw
+                l2_key = (current_l1_name, current_l2_name)
+                if l2_key not in l2_cache:
+                    l2_obj, _ = ActivityCategoryL2.objects.update_or_create(
+                        parent=current_l1,
+                        name=current_l2_name[:250],
+                        defaults={"order": l2_order},
+                    )
+                    l2_cache[l2_key] = l2_obj
+                    l2_order += 1
+                current_l2 = l2_cache[l2_key]
                 continue
 
-            # Use the L1 name as L2 bucket (real hierarchy from Excel)
-            l2_name = current_l1_name or "(umum)"
-            l2_key = (current_l1_name, l2_name)
-            if l2_key not in l2_cache:
-                l2_obj, _ = ActivityCategoryL2.objects.update_or_create(
-                    parent=current_l1,
-                    name=l2_name[:250],
-                    defaults={"order": 0},
+            # --- Activity row (L3): has description in col I ---
+            if l3_desc and current_l1 is not None:
+                # Determine L2 parent
+                l2 = current_l2
+                if l2 is None:
+                    # Fallback: use L1 name as L2 (for activities without explicit L2)
+                    fallback_name = current_l1_name or "(umum)"
+                    l2_key = (current_l1_name, fallback_name)
+                    if l2_key not in l2_cache:
+                        l2_obj, _ = ActivityCategoryL2.objects.update_or_create(
+                            parent=current_l1,
+                            name=fallback_name[:250],
+                            defaults={"order": 0},
+                        )
+                        l2_cache[l2_key] = l2_obj
+                    l2 = l2_cache[l2_key]
+
+                # Build effective code
+                effective_code = code
+                if not effective_code and isinstance(l3_num, (int, float)):
+                    effective_code = str(int(l3_num))
+                elif not effective_code and isinstance(l2_num, (int, float)):
+                    effective_code = str(int(l2_num))
+                effective_code = (effective_code or "")[:20]
+
+                obj, created = DrillingActivity.objects.update_or_create(
+                    category_l2=l2,
+                    code=effective_code,
+                    description=l3_desc[:500],
+                    defaults={
+                        "default_hours": hours or Decimal("0"),
+                        "phase_type": guess_phase_type(current_l1_name or ""),
+                    },
                 )
-                l2_cache[l2_key] = l2_obj
-            l2 = l2_cache[l2_key]
+                if created:
+                    activities_created += 1
+                else:
+                    activities_updated += 1
 
-            # Build effective code
-            effective_code = code
-            if not effective_code and isinstance(act_num, (int, float)):
-                effective_code = str(int(act_num))
-            effective_code = (effective_code or "")[:20]
+                # Link to hole section if col P has a value
+                if hole_size is not None:
+                    try:
+                        hs = HoleSection.objects.get(size_inch=hole_size)
+                        obj.applies_to_hole_sections.add(hs)
+                        hole_section_links += 1
+                    except HoleSection.DoesNotExist:
+                        pass  # hole section not yet imported
+                continue
 
-            obj, created = DrillingActivity.objects.update_or_create(
-                category_l2=l2,
-                code=effective_code,
-                description=desc[:500],
-                defaults={
-                    "default_hours": hours or Decimal("0"),
-                    "phase_type": guess_phase_type(current_l1_name or ""),
-                },
-            )
-            if created:
-                activities_created += 1
-            else:
-                activities_updated += 1
+            # --- 2-level activity: col G has desc but no col I (no L3) ---
+            if l2_name_raw and current_l1 is not None and hours is not None:
+                # This is an activity directly under L1 (no L2 sub-category)
+                fallback_name = current_l1_name or "(umum)"
+                l2_key = (current_l1_name, fallback_name)
+                if l2_key not in l2_cache:
+                    l2_obj, _ = ActivityCategoryL2.objects.update_or_create(
+                        parent=current_l1,
+                        name=fallback_name[:250],
+                        defaults={"order": 0},
+                    )
+                    l2_cache[l2_key] = l2_obj
+                l2 = l2_cache[l2_key]
+
+                effective_code = code
+                if not effective_code and isinstance(l2_num, (int, float)):
+                    effective_code = str(int(l2_num))
+                effective_code = (effective_code or "")[:20]
+
+                obj, created = DrillingActivity.objects.update_or_create(
+                    category_l2=l2,
+                    code=effective_code,
+                    description=l2_name_raw[:500],
+                    defaults={
+                        "default_hours": hours or Decimal("0"),
+                        "phase_type": guess_phase_type(current_l1_name or ""),
+                    },
+                )
+                if created:
+                    activities_created += 1
+                else:
+                    activities_updated += 1
+
+                if hole_size is not None:
+                    try:
+                        hs = HoleSection.objects.get(size_inch=hole_size)
+                        obj.applies_to_hole_sections.add(hs)
+                        hole_section_links += 1
+                    except HoleSection.DoesNotExist:
+                        pass
 
         self.stdout.write(
             f"  Activity categories L1={ActivityCategoryL1.objects.count()} "
             f"L2={ActivityCategoryL2.objects.count()} "
             f"Activities={DrillingActivity.objects.count()} "
-            f"(new {activities_created}, updated {activities_updated})"
+            f"(new {activities_created}, updated {activities_updated}, "
+            f"hole_section_links={hole_section_links})"
         )
 
     # ------------------------------------------------------------------

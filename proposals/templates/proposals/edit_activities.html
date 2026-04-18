@@ -7,6 +7,29 @@
 </h1>
 {% include "proposals/_wizard_nav.html" with step="activities" section=section %}
 
+{% if section_templates %}
+<div class="card" style="margin-bottom:16px;">
+  <h2>Apply Template</h2>
+  <p class="sub">Terapkan template aktivitas preset ke section ini.</p>
+  <form method="post" action="{% url 'proposals:apply_section_template' proposal.pk section.pk %}" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
+    {% csrf_token %}
+    <label>
+      <span>Template</span>
+      <select name="template_id" class="input" required>
+        <option value="">-- Pilih template --</option>
+        {% for t in section_templates %}
+        <option value="{{ t.pk }}">{{ t.name }} ({{ t.get_phase_kind_display }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label style="display:flex; align-items:center; gap:4px;">
+      <input type="checkbox" name="replace" value="1"> Hapus aktivitas lama
+    </label>
+    <button class="btn btn-primary" type="submit">Terapkan</button>
+  </form>
+</div>
+{% endif %}
+
 <form method="post" class="form">
   {% csrf_token %}
   {{ formset.management_form }}

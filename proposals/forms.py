@@ -1,4 +1,5 @@
 from django import forms
+from django.db import models as db_models
 
 from wells.models import Well, FormationMarker
 from masterdata.models import (
@@ -13,10 +14,12 @@ from masterdata.models import (
 from .models import (
     CasingSection,
     CompletionSpec,
+    CoringInterval,
     OperationalRate,
     Proposal,
     ProposalActivity,
-    TubingSpec,
+    TubeLengthRange,
+    TubingItem,
 )
 
 
@@ -34,7 +37,6 @@ class WellForm(forms.ModelForm):
             "surface_lat", "surface_lon", "target_lat", "target_lon",
             "project_type", "well_type", "well_category",
             "inclination_deg", "azimuth_deg", "kop_m",
-            "overlap_liner_7in_m", "overlap_liner_4in_m",
         ]
         widgets = {f: TEXT_INPUT for f in [
             "name", "cluster", "location", "field", "basin",
@@ -66,7 +68,7 @@ class CasingSectionForm(forms.ModelForm):
         model = CasingSection
         fields = [
             "order", "hole_section", "od_csg", "id_csg", "weight_lbs_ft",
-            "depth_m", "tol_hours", "mud_type", "is_completion", "notes",
+            "depth_m", "top_of_liner_m", "mud_type", "is_completion", "notes",
             "sg_from", "sg_to", "casing_type", "pounder", "thread",
             "range_spec", "section_type",
         ]
@@ -75,7 +77,7 @@ class CasingSectionForm(forms.ModelForm):
             "id_csg": NUMBER_INPUT,
             "weight_lbs_ft": NUMBER_INPUT,
             "depth_m": NUMBER_INPUT,
-            "tol_hours": NUMBER_INPUT,
+            "top_of_liner_m": NUMBER_INPUT,
             "sg_from": NUMBER_INPUT,
             "sg_to": NUMBER_INPUT,
             "pounder": NUMBER_INPUT,
@@ -103,7 +105,36 @@ class ProposalActivityForm(forms.ModelForm):
             "notes": TEXT_INPUT,
         }
 
+    def __init__(self, *args, hole_section=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if hole_section is not None:
+            # Show activities that either:
+            # 1. Have no hole_section restriction (generic), OR
+            # 2. Are linked to this specific hole section
+            self.fields["activity"].queryset = (
+                DrillingActivity.objects.filter(
+                    db_models.Q(applies_to_hole_sections__isnull=True)
+                    | db_models.Q(applies_to_hole_sections=hole_section)
+                ).distinct()
+            )
 
+
+def _make_activity_formset(hole_section=None):
+    """Create a ProposalActivityFormSet that filters activities by hole section."""
+
+    class _Form(ProposalActivityForm):
+        def __init__(self, *args, **kwargs):
+            kwargs["hole_section"] = hole_section
+            super().__init__(*args, **kwargs)
+
+    return forms.inlineformset_factory(
+        CasingSection, ProposalActivity,
+        form=_Form,
+        extra=3, can_delete=True,
+    )
+
+
+# Default formset (no filtering) for backward compatibility
 ProposalActivityFormSet = forms.inlineformset_factory(
     CasingSection, ProposalActivity,
     form=ProposalActivityForm,
@@ -111,24 +142,28 @@ ProposalActivityFormSet = forms.inlineformset_factory(
 )
 
 
-class TubingSpecForm(forms.ModelForm):
+class TubingItemForm(forms.ModelForm):
     class Meta:
-        model = TubingSpec
-        fields = ["order", "od_inch", "id_inch", "weight", "avg_length", "depth_md"]
+        model = TubingItem
+        fields = ["order", "od_inch", "id_inch", "weight_lbs_ft", "avg_length_m", "depth_md"]
         widgets = {
             "od_inch": NUMBER_INPUT,
             "id_inch": NUMBER_INPUT,
-            "weight": NUMBER_INPUT,
-            "avg_length": NUMBER_INPUT,
+            "weight_lbs_ft": NUMBER_INPUT,
+            "avg_length_m": NUMBER_INPUT,
             "depth_md": NUMBER_INPUT,
         }
 
 
-TubingSpecFormSet = forms.inlineformset_factory(
-    Proposal, TubingSpec,
-    form=TubingSpecForm,
+TubingItemFormSet = forms.inlineformset_factory(
+    Proposal, TubingItem,
+    form=TubingItemForm,
     extra=1, can_delete=True,
 )
+
+# Backward-compatible aliases
+TubingSpecForm = TubingItemForm
+TubingSpecFormSet = TubingItemFormSet
 
 
 class OperationalRateForm(forms.ModelForm):
@@ -171,8 +206,44 @@ class CompletionSpecForm(forms.ModelForm):
         model = CompletionSpec
         fields = [
             "salt_type", "sg", "yield_value", "volume",
-            "coring_depth_from", "coring_depth_to", "perforation_intervals",
+            "packaging_kg_per_sax", "perforation_intervals",
         ]
+
+
+class CoringIntervalForm(forms.ModelForm):
+    class Meta:
+        model = CoringInterval
+        fields = ["order", "depth_from_m", "depth_to_m", "coring_mtrg_m", "oh_section_inch"]
+        widgets = {
+            "depth_from_m": NUMBER_INPUT,
+            "depth_to_m": NUMBER_INPUT,
+            "coring_mtrg_m": NUMBER_INPUT,
+            "oh_section_inch": NUMBER_INPUT,
+        }
+
+
+CoringIntervalFormSet = forms.inlineformset_factory(
+    CompletionSpec, CoringInterval,
+    form=CoringIntervalForm,
+    extra=1, can_delete=True,
+)
+
+
+class TubeLengthRangeForm(forms.ModelForm):
+    class Meta:
+        model = TubeLengthRange
+        fields = ["label", "avg_length_m"]
+        widgets = {
+            "label": TEXT_INPUT,
+            "avg_length_m": NUMBER_INPUT,
+        }
+
+
+TubeLengthRangeFormSet = forms.inlineformset_factory(
+    Proposal, TubeLengthRange,
+    form=TubeLengthRangeForm,
+    extra=1, can_delete=True,
+)
 
 
 class ApprovalActionForm(forms.Form):

@@ -1,14 +1,20 @@
 """
-Helpers for applying section templates (preset variants from Tab 2.0 Excel)
-to casing sections or proposal-level phases.
+Helpers for applying section templates (preset activity lists)
+to casing sections.
 """
 
-from proposals.models import ProposalActivity, ProposalPhaseActivity
+from proposals.models import ProposalActivity
 from proposals.services.calc import recalculate_proposal
 
 
 def apply_template_to_section(section, template, replace=False):
-    """Bulk-create ProposalActivity rows from SectionTemplate.items."""
+    """Bulk-create ProposalActivity rows from SectionTemplate.items.
+
+    Args:
+        section: CasingSection instance
+        template: SectionTemplate instance
+        replace: if True, delete existing activities first
+    """
     if replace:
         section.activities.all().delete()
 
@@ -21,20 +27,3 @@ def apply_template_to_section(section, template, replace=False):
         )
 
     recalculate_proposal(section.proposal)
-
-
-def apply_template_to_phase(proposal, phase, template, replace=False):
-    """Bulk-create ProposalPhaseActivity rows from SectionTemplate.items."""
-    if replace:
-        proposal.phase_activities.filter(phase=phase).delete()
-
-    for idx, item in enumerate(template.items.select_related("activity").all()):
-        ProposalPhaseActivity.objects.create(
-            proposal=proposal,
-            phase=phase,
-            activity=item.activity,
-            order=idx,
-            hours_override=item.default_hours,
-        )
-
-    recalculate_proposal(proposal)

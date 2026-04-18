@@ -146,8 +146,8 @@ class Proposal(models.Model):
                 act.pk = None
                 act.casing_section = section
                 act.save()
-        # Clone tubing specs
-        for tubing in self.tubing_specs.all():
+        # Clone tubing items
+        for tubing in self.tubing_items.all():
             tubing.pk = None
             tubing.proposal = new_proposal
             tubing.save()
@@ -173,9 +173,9 @@ class CasingSection(models.Model):
     id_csg = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True)
     weight_lbs_ft = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     depth_m = models.DecimalField(max_digits=10, decimal_places=2)
-    tol_hours = models.DecimalField(
-        max_digits=8, decimal_places=2, default=0,
-        help_text="Time on Location override (hours). Leave 0 to use activity sum.",
+    top_of_liner_m = models.DecimalField(
+        "TOL (mMD)", max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Top of Liner (mMD). Isi hanya untuk liner, kosongkan untuk casing penuh.",
     )
     mud_type = models.ForeignKey(
         MudType, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
@@ -303,12 +303,12 @@ class ProposalActivity(models.Model):
         return (self.effective_hours / Decimal("24")).quantize(Decimal("0.001"))
 
 
-class TubingSpec(models.Model):
+class TubingItem(models.Model):
     """Production string tubing specification (Section 4 of A.Proposal).
     Multiple rows per proposal (Excel has 3.5", 2.875", 2.375")."""
 
     proposal = models.ForeignKey(
-        Proposal, on_delete=models.CASCADE, related_name="tubing_specs"
+        Proposal, on_delete=models.CASCADE, related_name="tubing_items"
     )
     order = models.PositiveIntegerField(default=0)
     od_inch = models.DecimalField(
@@ -317,15 +317,54 @@ class TubingSpec(models.Model):
     id_inch = models.DecimalField(
         "ID (inch)", max_digits=6, decimal_places=3, null=True, blank=True
     )
-    weight = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
-    avg_length = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
-    depth_md = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    weight_lbs_ft = models.DecimalField(
+        "Weight (lbs/ft)", max_digits=6, decimal_places=2, null=True, blank=True
+    )
+    avg_length_m = models.DecimalField(
+        "Avg length (m)", max_digits=6, decimal_places=2, null=True, blank=True
+    )
+    depth_md = models.DecimalField(
+        "Depth MD (m)", max_digits=10, decimal_places=2, null=True, blank=True
+    )
 
     class Meta:
         ordering = ["proposal_id", "order"]
 
     def __str__(self):
         return f"Tubing {self.od_inch}\" @ {self.depth_md} m"
+
+
+class FormationMarker(models.Model):
+    """Formation marker entries for a proposal."""
+
+    proposal = models.ForeignKey(
+        Proposal, on_delete=models.CASCADE, related_name="formation_markers"
+    )
+    order = models.PositiveIntegerField(default=0)
+    name = models.CharField(max_length=120, help_text="e.g. Cisubuh, Parigi, CBA")
+    depth_md = models.DecimalField("Depth MD (m)", max_digits=10, decimal_places=2)
+
+    class Meta:
+        ordering = ["proposal_id", "order"]
+
+    def __str__(self):
+        return f"{self.name} @ {self.depth_md} m"
+
+
+class TubeLengthRange(models.Model):
+    """Tube length range entries (R-1, R-2, R-3, SP) for a proposal."""
+
+    proposal = models.ForeignKey(
+        Proposal, on_delete=models.CASCADE, related_name="tube_length_ranges"
+    )
+    label = models.CharField(max_length=10, help_text="R-1, R-2, R-3, SP")
+    avg_length_m = models.DecimalField("Avg length (m)", max_digits=6, decimal_places=2)
+
+    class Meta:
+        ordering = ["proposal_id", "label"]
+
+    def __str__(self):
+        return f"{self.label}: {self.avg_length_m} m"
 
 
 class OperationalRate(models.Model):
@@ -366,13 +405,37 @@ class CompletionSpec(models.Model):
         max_digits=8, decimal_places=2, null=True, blank=True,
         help_text="Completion fluid volume (bbls)",
     )
-    coring_depth_from = models.DecimalField(
-        max_digits=10, decimal_places=2, null=True, blank=True
-    )
-    coring_depth_to = models.DecimalField(
-        max_digits=10, decimal_places=2, null=True, blank=True
+    packaging_kg_per_sax = models.DecimalField(
+        "Packaging (kg/sax)", max_digits=6, decimal_places=2, null=True, blank=True
     )
     perforation_intervals = models.TextField(blank=True)
+
+
+class CoringInterval(models.Model):
+    """Coring interval entries for a completion spec."""
+
+    completion_spec = models.ForeignKey(
+        CompletionSpec, on_delete=models.CASCADE, related_name="coring_intervals"
+    )
+    order = models.PositiveIntegerField(default=0)
+    depth_from_m = models.DecimalField(
+        "Depth from (m)", max_digits=10, decimal_places=2, null=True, blank=True
+    )
+    depth_to_m = models.DecimalField(
+        "Depth to (m)", max_digits=10, decimal_places=2, null=True, blank=True
+    )
+    coring_mtrg_m = models.DecimalField(
+        "Coring meterage (m)", max_digits=8, decimal_places=2, null=True, blank=True
+    )
+    oh_section_inch = models.DecimalField(
+        "OH section (inch)", max_digits=6, decimal_places=3, null=True, blank=True
+    )
+
+    class Meta:
+        ordering = ["completion_spec_id", "order"]
+
+    def __str__(self):
+        return f"Coring {self.depth_from_m}–{self.depth_to_m} m"
 
 
 class ApprovalAction(models.TextChoices):

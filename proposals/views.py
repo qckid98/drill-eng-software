@@ -1,5 +1,6 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
@@ -12,19 +13,21 @@ from .forms import (
     ApprovalActionForm,
     CasingSectionFormSet,
     CompletionSpecForm,
+    CoringIntervalFormSet,
     FormationMarkerFormSet,
     OperationalRateFormSet,
-    ProposalActivityFormSet,
     ProposalGeneralForm,
+    TubeLengthRangeFormSet,
     TubingSpecFormSet,
     WellForm,
+    _make_activity_formset,
 )
 from .models import (
     CasingSection,
     CompletionSpec,
     Proposal,
     ProposalStatus,
-    TubingSpec,
+    TubingItem,
 )
 from .services import approval
 from .services.calc import recalculate_proposal
@@ -59,8 +62,12 @@ def dashboard(request):
     # Available templates for "new from template" button
     templates = Proposal.objects.filter(status=ProposalStatus.TEMPLATE).select_related("well")
 
+    paginator = Paginator(qs, 25)
+    page = paginator.get_page(request.GET.get("page"))
+
     return render(request, "proposals/dashboard.html", {
-        "proposals": qs[:200],
+        "proposals": page,
+        "page_obj": page,
         "status_choices": [
             c for c in ProposalStatus.choices if c[0] != ProposalStatus.TEMPLATE
         ],
@@ -165,6 +172,9 @@ def proposal_detail(request, pk):
     proposal = get_object_or_404(
         Proposal.objects.select_related("well", "rig", "created_by"), pk=pk,
     )
+    # IDOR protection: engineers can only see their own proposals
+    if request.user.is_engineer and proposal.created_by != request.user:
+        return HttpResponseForbidden("Anda tidak memiliki akses ke proposal ini.")
     sections = proposal.casing_sections.prefetch_related("activities__activity").all()
 
     # Build chart series
@@ -201,7 +211,7 @@ def proposal_detail(request, pk):
         "can_submit": proposal.can_submit(request.user),
         "can_review": proposal.can_review(request.user),
         "can_approve": proposal.can_approve(request.user),
-        "tubing_specs": proposal.tubing_specs.all(),
+        "tubing_specs": proposal.tubing_items.all(),
         "operational_rates": proposal.operational_rates.all(),
         "formation_markers": proposal.well.formation_markers.all(),
     })
@@ -274,16 +284,25 @@ def proposal_edit_tubing(request, pk):
         return HttpResponseForbidden(str(exc))
 
     if request.method == "POST":
-        formset = TubingSpecFormSet(request.POST, instance=proposal)
-        if formset.is_valid():
-            formset.save()
-            messages.success(request, "Tubing spec disimpan.")
+        tubing_fs = TubingSpecFormSet(request.POST, instance=proposal, prefix="tubing")
+        marker_fs = FormationMarkerFormSet(request.POST, instance=proposal.well, prefix="marker")
+        range_fs = TubeLengthRangeFormSet(request.POST, instance=proposal, prefix="range")
+        if tubing_fs.is_valid() and marker_fs.is_valid() and range_fs.is_valid():
+            tubing_fs.save()
+            marker_fs.save()
+            range_fs.save()
+            messages.success(request, "Tubing, formation markers, dan tube length ranges disimpan.")
             return redirect("proposals:detail", pk=pk)
     else:
-        formset = TubingSpecFormSet(instance=proposal)
+        tubing_fs = TubingSpecFormSet(instance=proposal, prefix="tubing")
+        marker_fs = FormationMarkerFormSet(instance=proposal.well, prefix="marker")
+        range_fs = TubeLengthRangeFormSet(instance=proposal, prefix="range")
 
-    return render(request, "proposals/edit_simple.html", {
-        "proposal": proposal, "formset": formset, "section_title": "Tubing Specification",
+    return render(request, "proposals/edit_tubing.html", {
+        "proposal": proposal,
+        "tubing_formset": tubing_fs,
+        "marker_formset": marker_fs,
+        "range_formset": range_fs,
     })
 
 
@@ -295,17 +314,23 @@ def proposal_edit_completion(request, pk):
     except PermissionError as exc:
         return HttpResponseForbidden(str(exc))
 
-    instance, _ = CompletionSpec.objects.get_or_create(proposal=proposal)
+    comp_spec, _ = CompletionSpec.objects.get_or_create(proposal=proposal)
     if request.method == "POST":
-        form = CompletionSpecForm(request.POST, instance=instance)
-        if form.is_valid():
+        form = CompletionSpecForm(request.POST, instance=comp_spec)
+        coring_fs = CoringIntervalFormSet(request.POST, instance=comp_spec, prefix="coring")
+        if form.is_valid() and coring_fs.is_valid():
             form.save()
-            messages.success(request, "Completion spec disimpan.")
+            coring_fs.save()
+            messages.success(request, "Completion spec dan coring intervals disimpan.")
             return redirect("proposals:detail", pk=pk)
     else:
-        form = CompletionSpecForm(instance=instance)
-    return render(request, "proposals/edit_simple.html", {
-        "proposal": proposal, "form": form, "section_title": "Completion Specification",
+        form = CompletionSpecForm(instance=comp_spec)
+        coring_fs = CoringIntervalFormSet(instance=comp_spec, prefix="coring")
+
+    return render(request, "proposals/edit_completion.html", {
+        "proposal": proposal,
+        "form": form,
+        "coring_formset": coring_fs,
     })
 
 
@@ -367,21 +392,30 @@ def casing_activities(request, pk, section_id):
     except PermissionError as exc:
         return HttpResponseForbidden(str(exc))
 
+    # Build formset with activities filtered by this section's hole size
+    ActivityFormSet = _make_activity_formset(hole_section=section.hole_section)
+
     if request.method == "POST":
-        formset = ProposalActivityFormSet(request.POST, instance=section)
+        formset = ActivityFormSet(request.POST, instance=section)
         if formset.is_valid():
             formset.save()
             recalculate_proposal(proposal)
             messages.success(request, f"Aktivitas untuk section {section.hole_section} disimpan.")
             return redirect("proposals:casing_activities", pk=pk, section_id=section_id)
     else:
-        formset = ProposalActivityFormSet(instance=section)
+        formset = ActivityFormSet(instance=section)
+
+    from masterdata.models import SectionTemplate
+    available_templates = SectionTemplate.objects.filter(
+        Q(hole_section=section.hole_section) | Q(hole_section__isnull=True)
+    ).order_by("order")
 
     return render(request, "proposals/edit_activities.html", {
         "proposal": proposal,
         "section": section,
         "formset": formset,
         "category_l1": ActivityCategoryL1.objects.all(),
+        "section_templates": available_templates,
     })
 
 
@@ -432,5 +466,47 @@ def api_l2_options(request):
 @login_required
 def api_activity_options(request):
     l2_id = request.GET.get("l2")
+    hs_id = request.GET.get("hole_section")
     qs = DrillingActivity.objects.filter(category_l2_id=l2_id) if l2_id else DrillingActivity.objects.none()
+    # Filter by hole section if provided
+    if hs_id:
+        qs = qs.filter(
+            Q(applies_to_hole_sections__isnull=True)
+            | Q(applies_to_hole_sections__id=hs_id)
+        ).distinct()
     return render(request, "proposals/partials/options_activity.html", {"items": qs})
+
+
+@login_required
+@require_http_methods(["POST"])
+def apply_section_template(request, pk, section_id):
+    """Apply a SectionTemplate to a casing section's activities."""
+    from masterdata.models import SectionTemplate
+    from .services.templates import apply_template_to_section
+
+    proposal = get_object_or_404(Proposal, pk=pk)
+    section = get_object_or_404(CasingSection, pk=section_id, proposal=proposal)
+    try:
+        _require_edit(request.user, proposal)
+    except PermissionError as exc:
+        return HttpResponseForbidden(str(exc))
+
+    template_id = request.POST.get("template_id")
+    if not template_id:
+        messages.error(request, "Pilih template terlebih dahulu.")
+        return redirect("proposals:casing_activities", pk=pk, section_id=section_id)
+
+    try:
+        template = SectionTemplate.objects.get(pk=template_id)
+    except SectionTemplate.DoesNotExist:
+        messages.error(request, "Template tidak ditemukan.")
+        return redirect("proposals:casing_activities", pk=pk, section_id=section_id)
+
+    replace = request.POST.get("replace") == "1"
+    apply_template_to_section(section, template, replace=replace)
+    messages.success(
+        request,
+        f"Template '{template.name}' diterapkan ke section {section.hole_section}."
+        f"{' (aktivitas lama dihapus)' if replace else ''}"
+    )
+    return redirect("proposals:casing_activities", pk=pk, section_id=section_id)

@@ -8,6 +8,8 @@ from .models import (
     MudType,
     RigSpec,
     RopRate,
+    SectionTemplate,
+    SectionTemplateItem,
 )
 
 
@@ -59,3 +61,17 @@ class DrillingActivityAdmin(admin.ModelAdmin):
 class RigSpecAdmin(admin.ModelAdmin):
     list_display = ("platform_name", "horsepower", "floor_height_m", "capacity", "status")
     search_fields = ("platform_name",)
+
+
+class SectionTemplateItemInline(admin.TabularInline):
+    model = SectionTemplateItem
+    extra = 1
+    autocomplete_fields = ("activity",)
+
+
+@admin.register(SectionTemplate)
+class SectionTemplateAdmin(admin.ModelAdmin):
+    list_display = ("name", "hole_section", "phase_kind", "order")
+    list_filter = ("phase_kind", "hole_section")
+    search_fields = ("name",)
+    inlines = [SectionTemplateItemInline]

@@ -71,11 +71,6 @@ def calculate_section_totals(section) -> SectionTotals:
     completion_days = completion_hours / Decimal("24")
     total_days = drilling_days + non_drilling_days + completion_days
 
-    # TOL override: if tol_hours is set (>0), it REPLACES the non-drilling bucket.
-    if section.tol_hours and section.tol_hours > 0:
-        non_drilling_days = Decimal(section.tol_hours) / Decimal("24")
-        total_days = drilling_days + non_drilling_days + completion_days
-
     interval = section.interval_length_m
     if drilling_days > 0 and interval > 0:
         rate = interval / drilling_days
@@ -146,4 +141,79 @@ def recalculate_proposal(proposal, save: bool = True) -> ProposalTotals:
         proposal.save(update_fields=[
             "total_dryhole_days", "total_completion_days", "total_rig_days",
         ])
+    # Auto-calculate overlap liner values on the Well
+    update_overlap_liners(proposal)
     return totals
+
+
+# ---------------------------------------------------------------------------
+# Overlap liner auto-calculation
+# ---------------------------------------------------------------------------
+# In the Excel source (A.Proposal), overlap liner is calculated as:
+#   Overlap Liner 7"   = depth of casing ABOVE the 7" liner − TOL of 7" liner
+#   Overlap Liner 4½"  = depth of casing ABOVE the 4½" liner − TOL of 4½" liner
+#
+# Liner identification is by OD casing (od_csg):
+#   7" liner  → od_csg ≈ 7.000
+#   4½" liner → od_csg ≈ 4.500
+# ---------------------------------------------------------------------------
+
+_LINER_7_OD = Decimal("7")
+_LINER_4_OD = Decimal("4.5")
+_OD_TOLERANCE = Decimal("0.05")
+
+
+def _find_liner_and_previous(sections, target_od):
+    """Find a liner section by OD and return (liner_section, previous_section).
+
+    ``sections`` must be ordered by ``order`` ascending.
+    Returns (None, None) if no matching liner with a filled ``top_of_liner_m``
+    is found.
+    """
+    for idx, sec in enumerate(sections):
+        if sec.od_csg is None or sec.top_of_liner_m is None:
+            continue
+        if abs(sec.od_csg - target_od) <= _OD_TOLERANCE:
+            prev = sections[idx - 1] if idx > 0 else None
+            return sec, prev
+    return None, None
+
+
+def update_overlap_liners(proposal):
+    """Recalculate overlap_liner_7in_m and overlap_liner_4in_m on the Well.
+
+    Called automatically by ``recalculate_proposal``.
+    """
+    sections = list(
+        proposal.casing_sections.order_by("order").only(
+            "od_csg", "depth_m", "top_of_liner_m", "order",
+        )
+    )
+    well = proposal.well
+    changed = False
+
+    # --- Overlap Liner 7" ---
+    liner7, prev7 = _find_liner_and_previous(sections, _LINER_7_OD)
+    if liner7 and prev7 and prev7.depth_m:
+        overlap_7 = _q(prev7.depth_m - liner7.top_of_liner_m, Q2)
+        if well.overlap_liner_7in_m != overlap_7:
+            well.overlap_liner_7in_m = overlap_7
+            changed = True
+    elif well.overlap_liner_7in_m is not None:
+        # No 7" liner found → clear the value
+        well.overlap_liner_7in_m = None
+        changed = True
+
+    # --- Overlap Liner 4½" ---
+    liner4, prev4 = _find_liner_and_previous(sections, _LINER_4_OD)
+    if liner4 and prev4 and prev4.depth_m:
+        overlap_4 = _q(prev4.depth_m - liner4.top_of_liner_m, Q2)
+        if well.overlap_liner_4in_m != overlap_4:
+            well.overlap_liner_4in_m = overlap_4
+            changed = True
+    elif well.overlap_liner_4in_m is not None:
+        well.overlap_liner_4in_m = None
+        changed = True
+
+    if changed:
+        well.save(update_fields=["overlap_liner_7in_m", "overlap_liner_4in_m"])

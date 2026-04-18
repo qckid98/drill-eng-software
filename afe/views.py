@@ -92,6 +92,8 @@ def afe_create(request, proposal_pk):
     user = request.user
     if not (user.is_engineer or user.is_admin_role):
         return HttpResponseForbidden("Hanya Drilling Engineer yang dapat membuat AFE.")
+    if user.is_engineer and proposal.created_by != user:
+        return HttpResponseForbidden("Anda hanya dapat membuat AFE dari proposal milik Anda sendiri.")
     if proposal.status != ProposalStatus.APPROVED:
         messages.error(request, "AFE hanya bisa dibuat dari Proposal yang sudah APPROVED.")
         return redirect("proposals:detail", pk=proposal.pk)
@@ -119,6 +121,9 @@ def afe_detail(request, pk):
         AFE.objects.select_related("proposal", "proposal__well", "created_by"),
         pk=pk,
     )
+    # IDOR protection: engineers can only see their own AFEs
+    if request.user.is_engineer and afe.created_by != request.user:
+        return HttpResponseForbidden("Anda tidak memiliki akses ke AFE ini.")
     lines = (afe.lines
              .select_related("template", "rate_card_item")
              .prefetch_related("components")
@@ -374,6 +379,14 @@ def rate_card_upload(request):
         form = RateCardUploadForm(request.POST, request.FILES)
         if form.is_valid():
             excel_file = request.FILES["excel_file"]
+            # Validate file size (max 10MB)
+            if excel_file.size > 10 * 1024 * 1024:
+                messages.error(request, "Ukuran file terlalu besar (maks 10 MB).")
+                return redirect("afe:rate_card_upload")
+            # Validate file extension
+            if not excel_file.name.lower().endswith((".xlsx", ".xls")):
+                messages.error(request, "Format file harus .xlsx atau .xls.")
+                return redirect("afe:rate_card_upload")
             try:
                 created, updated = _process_rate_card_upload(excel_file)
                 RateCardImportLog.objects.create(
@@ -381,14 +394,16 @@ def rate_card_upload(request):
                     file_name=excel_file.name,
                     items_created=created,
                     items_updated=updated,
-                    notes=f"Uploaded via web UI",
+                    notes="Uploaded via web UI",
                 )
                 messages.success(
                     request,
                     f"Import selesai: {created} item baru, {updated} item diperbarui.",
                 )
-            except Exception as exc:
-                messages.error(request, f"Error saat import: {exc}")
+            except Exception:
+                import logging
+                logging.getLogger("afe").exception("Rate card import failed: %s", excel_file.name)
+                messages.error(request, "Terjadi kesalahan saat import file. Periksa format file Anda.")
             return redirect("afe:rate_card_list")
     else:
         form = RateCardUploadForm()

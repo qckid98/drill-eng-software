@@ -6,18 +6,23 @@ Drilling Proposal (Drilling Time) web application — migrated from the
 Drilling Engineers (form DEP/Form/DE/01/DT v2.4/2017).
 """
 
+import logging
 from pathlib import Path
 import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # --- Core ---
-SECRET_KEY = os.environ.get(
-    "DJANGO_SECRET_KEY",
-    "dev-insecure-key-change-in-production-please-seriously",
-)
-DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",")
+_default_key = "dev-insecure-key-change-in-production-please-seriously"
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", _default_key)
+DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
+ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+
+if not DEBUG and SECRET_KEY == _default_key:
+    raise RuntimeError(
+        "DJANGO_SECRET_KEY env var must be set in production. "
+        "Generate one with: python -c \"from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())\""
+    )
 
 # --- Applications ---
 INSTALLED_APPS = [
@@ -29,7 +34,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Third party
     "django_htmx",
-    "rest_framework",
     # Local
     "accounts",
     "masterdata",
@@ -123,6 +127,63 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# --- Security hardening (production) ---
+CSRF_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_HTTPONLY = True
+SECURE_SSL_REDIRECT = not DEBUG
+SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_BROWSER_XSS_FILTER = True
+X_FRAME_OPTIONS = "DENY"
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+# --- File upload limits ---
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+
+# --- Logging ---
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "[{asctime}] {levelname} {name} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+        "file": {
+            "class": "logging.FileHandler",
+            "filename": BASE_DIR / "drilltime.log",
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        "django.security": {
+            "handlers": ["console", "file"],
+            "level": "WARNING",
+        },
+        "django.request": {
+            "handlers": ["console", "file"],
+            "level": "WARNING",
+        },
+        "proposals": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+        },
+        "afe": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+        },
+    },
+}
 
 # --- App-specific ---
 DRILLTIME_DOC_PREFIX = "DEP/Form/DE/01/DT"

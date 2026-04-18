@@ -26,16 +26,8 @@ urlpatterns = [
         views.apply_section_template,
         name="apply_section_template",
     ),
-    path(
-        "<int:pk>/phase/<str:phase>/",
-        views.phase_activities,
-        name="phase_activities",
-    ),
-    path(
-        "<int:pk>/phase/<str:phase>/apply-template/",
-        views.apply_phase_template,
-        name="apply_phase_template",
-    ),
+    # Phase-level activity editing removed — all activities are managed
+    # per casing section via the casing_activities view.
     path("<int:pk>/action/", views.proposal_action, name="action"),
     # HTMX endpoints for cascading dropdowns
     path("api/l2/", views.api_l2_options, name="api_l2"),
