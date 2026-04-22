@@ -6,14 +6,18 @@ Drilling Proposal (Drilling Time) web application — migrated from the
 Drilling Engineers (form DEP/Form/DE/01/DT v2.4/2017).
 """
 
-import logging
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load .env file from project root (if it exists)
+load_dotenv(BASE_DIR / ".env")
+
 # --- Core ---
-_default_key = "dev-insecure-key-change-in-production-please-seriously"
+_default_key = "qn_x(kw@(!+in-j#2ey-(=jwb(r&f3m7g=4_+#_+6__1gk&kfq"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", _default_key)
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
@@ -136,7 +140,6 @@ SECURE_SSL_REDIRECT = not DEBUG
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_CONTENT_TYPE_NOSNIFF = True
-SECURE_BROWSER_XSS_FILTER = True
 X_FRAME_OPTIONS = "DENY"
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 

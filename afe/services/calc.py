@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import transaction
+from django.db.models.signals import post_save
 
 from proposals.models import CasingSection, Proposal
 
@@ -200,41 +201,52 @@ def generate_afe_from_proposal(afe: AFE, *, overwrite: bool = True) -> None:
 
     Also generates AFELineComponent detail records from rate cards.
     If `overwrite=True`, existing override_usd values are wiped.
+
+    Temporarily disconnects the AFELine post_save signal to avoid
+    calling recalculate_afe() 58 times — it is called once at the end.
     """
-    drivers = ProposalDrivers.from_proposal(afe.proposal)
-    templates = list(AFETemplate.objects.all().order_by("order", "line_code"))
+    from ..signals import _afeline_saved
 
-    for tpl in templates:
-        if tpl.is_subtotal_row:
-            AFELine.objects.update_or_create(
-                afe=afe, template=tpl,
-                defaults={
-                    "calculated_usd": Decimal("0"),
-                    "override_usd": None,
-                    "quantity": None,
-                    "unit_price_usd": None,
-                    "rate_card_item": None,
-                },
+    # Disconnect signal to avoid 58x recalculate during bulk line creation
+    post_save.disconnect(_afeline_saved, sender=AFELine)
+    try:
+        drivers = ProposalDrivers.from_proposal(afe.proposal)
+        templates = list(AFETemplate.objects.all().order_by("order", "line_code"))
+
+        for tpl in templates:
+            if tpl.is_subtotal_row:
+                AFELine.objects.update_or_create(
+                    afe=afe, template=tpl,
+                    defaults={
+                        "calculated_usd": Decimal("0"),
+                        "override_usd": None,
+                        "quantity": None,
+                        "unit_price_usd": None,
+                        "rate_card_item": None,
+                    },
+                )
+                continue
+
+            amount, qty, unit_price, rate_item = _calc_line_amount(tpl, drivers)
+            defaults = {
+                "calculated_usd": amount,
+                "quantity": qty,
+                "unit_price_usd": unit_price,
+                "rate_card_item": rate_item,
+            }
+            if overwrite:
+                defaults["override_usd"] = None
+
+            line, _ = AFELine.objects.update_or_create(
+                afe=afe, template=tpl, defaults=defaults
             )
-            continue
 
-        amount, qty, unit_price, rate_item = _calc_line_amount(tpl, drivers)
-        defaults = {
-            "calculated_usd": amount,
-            "quantity": qty,
-            "unit_price_usd": unit_price,
-            "rate_card_item": rate_item,
-        }
-        if overwrite:
-            defaults["override_usd"] = None
-
-        line, _ = AFELine.objects.update_or_create(
-            afe=afe, template=tpl, defaults=defaults
-        )
-
-        # Generate component detail for this line
-        if overwrite:
-            _generate_components(line, drivers)
+            # Generate component detail for this line
+            if overwrite:
+                _generate_components(line, drivers)
+    finally:
+        # Always reconnect the signal, even if an error occurred
+        post_save.connect(_afeline_saved, sender=AFELine)
 
     recalculate_afe(afe)
 

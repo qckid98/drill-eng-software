@@ -18,8 +18,8 @@ Drilling Proposal yang diajukan ke management.
 - Kalkulasi drilling time otomatis (`proposals/services/calc.py`):
   - Drilling / non-drilling / completion hours → days per section
   - Drilling rate m/day per section
-  - **Rig Days = MAX(total_days) + mob + demob** — meniru formula
-    `=MAX(Chart!CA212:CA232)` di Excel untuk operasi paralel.
+  - **Rig Days = SUM(total_days) + mob + demob** — meniru formula
+    kumulatif di Excel Tab 3.0 untuk operasi sekuensial.
 - Workflow approval: Draft → Submitted → Under Review → Approved / Rejected,
   dengan audit trail (`ApprovalLog`).
 - Dashboard + Inbox per role.
